@@ -44,8 +44,8 @@ export default function SignUpPage() {
     return true;
   };
 
-  const handleSignUp = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSignUp = async (e?: React.FormEvent | React.MouseEvent) => {
+    if (e) e.preventDefault();
     setError('');
 
     if (!validateForm()) {
@@ -241,7 +241,8 @@ export default function SignUpPage() {
 
             {/* Sign Up Button */}
             <Button
-              type="submit"
+              type="button"
+              onClick={handleSignUp}
               disabled={loading}
               className="w-full h-11 rounded-lg mt-6 gap-2"
             >

@@ -14,8 +14,8 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleLogin = async (e?: React.FormEvent | React.MouseEvent) => {
+    if (e) e.preventDefault();
     setError('');
     setLoading(true);
 
@@ -133,7 +133,8 @@ export default function LoginPage() {
 
             {/* Login Button */}
             <Button
-              type="submit"
+              type="button"
+              onClick={handleLogin}
               disabled={loading}
               className="w-full h-11 rounded-lg mt-6 gap-2"
             >
