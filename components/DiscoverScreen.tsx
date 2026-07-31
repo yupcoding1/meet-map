@@ -48,6 +48,16 @@ export default function DiscoverScreen() {
             </p>
           </div>
           <div className="flex items-center gap-3">
+            <Link href="/profile">
+              <Button
+                variant="outline"
+                size="lg"
+                className="rounded-lg gap-2 whitespace-nowrap"
+              >
+                <User size={18} />
+                <span className="hidden sm:inline">Profile</span>
+              </Button>
+            </Link>
             <Link href="/dashboard">
               <Button
                 variant="outline"

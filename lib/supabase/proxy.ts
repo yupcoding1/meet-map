@@ -6,11 +6,20 @@ export async function updateSession(request: NextRequest) {
     request,
   })
 
+  // Check if Supabase environment variables are configured
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+  // If Supabase is not configured, just return the response without auth
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return supabaseResponse
+  }
+
   // With Fluid compute, don't put this client in a global environment
   // variable. Always create a new one on each request.
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    supabaseUrl,
+    supabaseAnonKey,
     {
       // Secure cookies in production; not in dev, so localhost still works.
       cookieOptions: { secure: process.env.NODE_ENV === 'production' },
