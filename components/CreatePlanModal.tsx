@@ -4,7 +4,7 @@ import { useState, useMemo } from 'react';
 import { X, MapPin, Calendar, Users, Hash } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ACTIVITIES, type ActivityType, createPlan } from '@/lib/dataUtils';
-import VenueSearch from './VenueSearch';
+import LocationPicker, { type SelectedLocation } from './LocationPicker';
 import ActivitySelector from './ActivitySelector';
 import DateTimePicker from './DateTimePicker';
 import SpotsSelector from './SpotsSelector';
@@ -22,7 +22,7 @@ export default function CreatePlanModal({
   onCreate,
 }: CreatePlanModalProps) {
   const [venue, setVenue] = useState('');
-  const [selectedVenue, setSelectedVenue] = useState<any>(null);
+  const [selectedLocation, setSelectedLocation] = useState<SelectedLocation | null>(null);
   const [activity, setActivity] = useState<ActivityType>('coffee');
   const [date, setDate] = useState('');
   const [time, setTime] = useState('14:00');
@@ -31,34 +31,46 @@ export default function CreatePlanModal({
 
   // Determine if required fields are filled
   const isFormValid = useMemo(() => {
-    return selectedVenue && activity && date && time && spots >= 2 && spots <= 10;
-  }, [selectedVenue, activity, date, time, spots]);
+    return selectedLocation && selectedLocation.lat !== 0 && activity && date && time && spots >= 2 && spots <= 10;
+  }, [selectedLocation, activity, date, time, spots]);
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!isFormValid) return;
 
+    console.log('[CreatePlanModal] Creating plan...', { activity, venue: selectedLocation?.name, date, time, spots });
+
+    if (!selectedLocation || selectedLocation.lat === 0) {
+      console.error('[CreatePlanModal] No location selected');
+      return;
+    }
+
     const newPlan = {
-      id: `plan-${Date.now()}`,
-      title: `${ACTIVITIES[activity].label} at ${selectedVenue.name}`,
+      title: `${ACTIVITIES[activity].label} at ${selectedLocation.name}`,
       description: description || `Join us for a ${activity} experience!`,
-      location: selectedVenue.name,
-      lat: selectedVenue.lat,
-      lng: selectedVenue.lng,
+      location: selectedLocation.name,
+      lat: selectedLocation.lat,
+      lng: selectedLocation.lng,
       activity,
       date,
       time,
-      distance: selectedVenue.distance,
-      attendees: 1,
-      spotTotal: spots,
-      image:
-        'https://images.unsplash.com/photo-1552664730-d307ca884978?w=400&h=300&fit=crop',
+      spots_available: spots,
+      attendees_count: 1,
     };
 
-    onCreate?.(newPlan);
+    console.log('[CreatePlanModal] Calling createPlan in Supabase...');
+    const result = await createPlan(newPlan);
+    
+    if (result) {
+      console.log('[CreatePlanModal] Plan created successfully:', result.id);
+      onCreate?.(result);
+    } else {
+      console.error('[CreatePlanModal] Failed to create plan');
+    }
+    
     onClose();
     // Reset form
     setVenue('');
-    setSelectedVenue(null);
+    setSelectedLocation(null);
     setActivity('coffee');
     setDate('');
     setTime('14:00');
@@ -104,11 +116,12 @@ export default function CreatePlanModal({
                 <label className="block text-sm font-semibold text-slate-900 mb-3">
                   Where are you planning?
                 </label>
-                <VenueSearch
+                <LocationPicker
                   value={venue}
                   onChange={setVenue}
-                  onSelect={setSelectedVenue}
-                  selectedVenue={selectedVenue}
+                  onSelect={setSelectedLocation}
+                  selectedLocation={selectedLocation}
+                  placeholder="Enter a place name and click on the map..."
                 />
               </div>
 
@@ -187,7 +200,7 @@ export default function CreatePlanModal({
                   Preview
                 </h3>
                 <PlanPreviewCard
-                  venue={selectedVenue?.name}
+                  venue={selectedLocation?.name}
                   activity={activity}
                   date={date}
                   time={time}
@@ -204,7 +217,7 @@ export default function CreatePlanModal({
               Preview
             </h3>
             <PlanPreviewCard
-              venue={selectedVenue?.name}
+              venue={selectedLocation?.name}
               activity={activity}
               date={date}
               time={time}

@@ -15,16 +15,20 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async (e?: React.FormEvent | React.MouseEvent) => {
+    console.log('[Login] handleLogin called!', { email: email ? 'provided' : 'empty', password: password ? 'provided' : 'empty' });
     if (e) e.preventDefault();
     setError('');
     setLoading(true);
 
     try {
+      console.log('[Login] Creating Supabase client...');
       const supabase = createClient();
+      console.log('[Login] Calling signInWithPassword...');
       const { error: signInError } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
+      console.log('[Login] signInWithPassword response:', signInError ? `ERROR: ${signInError.message}` : 'SUCCESS');
 
       if (signInError) {
         if (signInError.message.includes('Invalid login credentials')) {

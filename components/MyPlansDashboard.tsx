@@ -1,9 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import MyPlanCard from './MyPlanCard';
-import { mockPlans, type Plan } from '@/lib/dataUtils';
+import { getPlans, type Plan } from '@/lib/dataUtils';
 import { Calendar, Users, Clock, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
 
@@ -11,16 +11,33 @@ type TabType = 'hosting' | 'joined' | 'requests';
 
 export default function MyPlansDashboard() {
   const [activeTab, setActiveTab] = useState<TabType>('hosting');
+  const [allPlans, setAllPlans] = useState<Plan[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Mock data - in production, fetch from Supabase based on user ID
-  const hostedPlans: Plan[] = mockPlans.slice(0, 2);
-  const joinedPlans: Plan[] = mockPlans.slice(2, 5);
-  const requestPlans: Plan[] = mockPlans.slice(5, 7);
-  
-  // To see empty states, uncomment and comment out lines above:
-  // const hostedPlans: Plan[] = [];
-  // const joinedPlans: Plan[] = [];
-  // const requestPlans: Plan[] = [];
+  // Fetch plans from Supabase on mount
+  useEffect(() => {
+    console.log('[MyPlansDashboard] Component mounted, fetching plans from Supabase...');
+    setLoading(true);
+    setError(null);
+    
+    getPlans()
+      .then((data) => {
+        console.log(`[MyPlansDashboard] Plans loaded successfully: ${data.length} plans`);
+        setAllPlans(data);
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error('[MyPlansDashboard] Failed to load plans:', err);
+        setError('Failed to load plans from database.');
+        setLoading(false);
+      });
+  }, []);
+
+  // For now, show all plans (in production, filter by user ID)
+  const hostedPlans: Plan[] = allPlans;
+  const joinedPlans: Plan[] = [];
+  const requestPlans: Plan[] = [];
 
   const tabs: { id: TabType; label: string; count: number }[] = [
     { id: 'hosting', label: 'Hosting', count: hostedPlans.length },
@@ -37,14 +54,14 @@ export default function MyPlansDashboard() {
         buttonHref: '/?create=true',
       },
       joined: {
-        title: 'You haven&apos;t joined any plans yet',
+        title: 'You haven\u2019t joined any plans yet',
         description: 'Explore nearby plans and join the community.',
         buttonText: 'Discover Plans',
         buttonHref: '/',
       },
       requests: {
         title: 'No pending requests',
-        description: 'Once you request to join a plan, they&apos;ll appear here.',
+        description: 'Once you request to join a plan, they\u2019ll appear here.',
         buttonText: 'Find Plans to Join',
         buttonHref: '/',
       },
@@ -83,6 +100,28 @@ export default function MyPlansDashboard() {
 
   const plans = getPlansForTab();
   const isEmpty = plans.length === 0;
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <div className="text-center">
+          <div className="w-8 h-8 border-4 border-teal-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-slate-600">Loading plans...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 px-4 bg-white rounded-2xl border-2 border-dashed border-red-200">
+        <p className="text-red-600 mb-4">{error}</p>
+        <Button onClick={() => window.location.reload()} className="rounded-lg">
+          Retry
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div>

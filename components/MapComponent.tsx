@@ -16,12 +16,14 @@ interface MapComponentProps {
   plans: Plan[];
   selectedPlanId?: string;
   onPlanSelect: (planId: string) => void;
+  userLocation?: { lat: number; lng: number } | null;
 }
 
 export default function MapComponent({
   plans,
   selectedPlanId,
   onPlanSelect,
+  userLocation,
 }: MapComponentProps) {
   return (
     <div className="w-full h-full rounded-2xl overflow-hidden shadow-lg" suppressHydrationWarning>
@@ -30,6 +32,7 @@ export default function MapComponent({
         plans={plans}
         selectedPlanId={selectedPlanId}
         onPlanSelect={onPlanSelect}
+        userLocation={userLocation}
       />
     </div>
   );

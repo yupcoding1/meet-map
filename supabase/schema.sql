@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS plans (
   host_id UUID NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
   description TEXT,
-  activity_type_id UUID NOT NULL REFERENCES activity_types(id),
+  activity_type_id UUID REFERENCES activity_types(id),
   venue_name TEXT NOT NULL,
   latitude DECIMAL(10, 8) NOT NULL,
   longitude DECIMAL(11, 8) NOT NULL,
@@ -305,6 +305,7 @@ ALTER TABLE user_presence ENABLE ROW LEVEL SECURITY;
 
 -- User Profiles
 CREATE POLICY "Users can read all profiles" ON user_profiles FOR SELECT USING (true);
+CREATE POLICY "Users can insert their own profile" ON user_profiles FOR INSERT WITH CHECK (auth.uid() = id);
 CREATE POLICY "Users can update their own profile" ON user_profiles FOR UPDATE USING (auth.uid() = id);
 
 -- Plans: hosts always see their own; everyone else sees active + public plans,
@@ -323,10 +324,10 @@ CREATE POLICY "Users can create plans" ON plans FOR INSERT WITH CHECK (auth.uid(
 CREATE POLICY "Users can update their own plans" ON plans FOR UPDATE USING (auth.uid() = host_id);
 
 -- Plan Participants
+-- Note: This policy avoids recursion by only checking user_id = auth.uid()
+-- The plans SELECT policy queries plan_participants with user_id = auth.uid(), which is allowed here
 CREATE POLICY "Users can read plan participants" ON plan_participants FOR SELECT USING (
-  plan_id IN (SELECT id FROM plans WHERE host_id = auth.uid() OR id IN (
-    SELECT plan_id FROM plan_participants WHERE user_id = auth.uid()
-  ))
+  user_id = auth.uid()
 );
 CREATE POLICY "Users can join plans" ON plan_participants FOR INSERT WITH CHECK (
   auth.uid() = user_id AND status = 'pending'

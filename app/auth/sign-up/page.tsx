@@ -45,17 +45,21 @@ export default function SignUpPage() {
   };
 
   const handleSignUp = async (e?: React.FormEvent | React.MouseEvent) => {
+    console.log('[SignUp] handleSignUp called!', { email: formData.email ? 'provided' : 'empty', firstName: formData.firstName ? 'provided' : 'empty' });
     if (e) e.preventDefault();
     setError('');
 
     if (!validateForm()) {
+      console.log('[SignUp] Form validation failed');
       return;
     }
 
     setLoading(true);
 
     try {
+      console.log('[SignUp] Creating Supabase client...');
       const supabase = createClient();
+      console.log('[SignUp] Calling signUp with email:', formData.email);
       const { data, error: signUpError } = await supabase.auth.signUp({
         email: formData.email,
         password: formData.password,

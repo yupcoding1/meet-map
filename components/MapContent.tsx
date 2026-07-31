@@ -9,27 +9,32 @@ interface MapContentProps {
   plans: Plan[];
   selectedPlanId?: string;
   onPlanSelect: (planId: string) => void;
+  userLocation?: { lat: number; lng: number } | null;
 }
 
 export default function MapContent({
   plans,
   selectedPlanId,
   onPlanSelect,
+  userLocation,
 }: MapContentProps) {
   const mapRef = useRef<L.Map | null>(null);
   const markersRef = useRef<{ [key: string]: L.Marker }>({});
+  const userMarkerRef = useRef<L.Marker | null>(null);
 
+  // Initialize map once
   useEffect(() => {
     if (!mapRef.current) {
       const container = document.getElementById('map-container');
       if (!container) return;
 
-      // Remove any existing map
       if (container._leaflet_id) {
         delete container._leaflet_id;
       }
 
-      const center: [number, number] = [40.7505, -73.9680];
+      const center: [number, number] = userLocation 
+        ? [userLocation.lat, userLocation.lng] 
+        : [40.7505, -73.9680];
       const map = L.map('map-container').setView(center, 13);
 
       L.tileLayer(
@@ -48,6 +53,33 @@ export default function MapContent({
       // Don't destroy the map on unmount to prevent strict mode issues
     };
   }, []);
+
+  // Re-center map and update user marker when userLocation changes
+  useEffect(() => {
+    if (!mapRef.current || !userLocation) return;
+
+    const map = mapRef.current;
+    console.log('[MapContent] Re-centering map to user location:', userLocation);
+
+    // Center map on user's location
+    map.setView([userLocation.lat, userLocation.lng], 13);
+
+    // Remove old user marker
+    if (userMarkerRef.current) {
+      map.removeLayer(userMarkerRef.current);
+    }
+
+    // Add new user marker
+    const userIcon = L.divIcon({
+      html: '<div class="w-4 h-4 bg-blue-500 rounded-full border-2 border-white shadow-md"></div>',
+      iconSize: [16, 16],
+      iconAnchor: [8, 8],
+    });
+    const userMarker = L.marker([userLocation.lat, userLocation.lng], { icon: userIcon })
+      .bindPopup('<div class="p-2"><p class="text-sm font-medium">Your location</p></div>')
+      .addTo(map);
+    userMarkerRef.current = userMarker;
+  }, [userLocation]);
 
   // Update markers when plans change
   useEffect(() => {

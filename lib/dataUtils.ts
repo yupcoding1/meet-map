@@ -51,123 +51,7 @@ export interface Participant extends User {
   role?: 'host' | 'member';
 }
 
-// Mock data for fallback
-export const mockPlans: Plan[] = [
-  {
-    id: '1',
-    title: 'Morning Coffee Meetup',
-    description: 'Starting the day with great coffee and interesting conversations',
-    location: 'Brew & Bean Coffee Shop',
-    lat: 40.7524,
-    lng: -73.9797,
-    activity: 'coffee',
-    date: '2024-08-15',
-    time: '08:00',
-    spots_available: 5,
-    attendees_count: 5,
-    image_url: 'https://images.unsplash.com/photo-1495521821757-a1efb6729352?w=400&h=300&fit=crop',
-  },
-  {
-    id: '2',
-    title: 'Central Park Hike',
-    description: 'Scenic walk through Central Park, perfect for a peaceful afternoon',
-    location: 'Central Park Entrance',
-    lat: 40.7829,
-    lng: -73.9654,
-    activity: 'hiking',
-    date: '2024-08-16',
-    time: '14:00',
-    spots_available: 8,
-    attendees_count: 8,
-    image_url: 'https://images.unsplash.com/photo-1551632786-de41ec16a83a?w=400&h=300&fit=crop',
-  },
-  {
-    id: '3',
-    title: 'Rooftop Dinner Party',
-    description: 'Enjoy delicious cuisine while watching the sunset',
-    location: 'Skyline Restaurant',
-    lat: 40.7489,
-    lng: -73.9680,
-    activity: 'dining',
-    date: '2024-08-17',
-    time: '19:00',
-    spots_available: 6,
-    attendees_count: 3,
-    image_url: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=300&fit=crop',
-  },
-  {
-    id: '4',
-    title: 'Weekend Shopping Spree',
-    description: 'Hit up the best shops in the city',
-    location: 'Fifth Avenue',
-    lat: 40.7614,
-    lng: -73.9776,
-    activity: 'shopping',
-    date: '2024-08-18',
-    time: '11:00',
-    spots_available: 4,
-    attendees_count: 2,
-    image_url: 'https://images.unsplash.com/photo-1555529394-cc5228052804?w=400&h=300&fit=crop',
-  },
-  {
-    id: '5',
-    title: 'Art Gallery Tour',
-    description: 'Explore contemporary art with fellow enthusiasts',
-    location: 'Modern Art Museum',
-    lat: 40.7711,
-    lng: -73.9896,
-    activity: 'cultural',
-    date: '2024-08-19',
-    time: '16:00',
-    spots_available: 10,
-    attendees_count: 4,
-    image_url: 'https://images.unsplash.com/photo-1561214115-6d2f1b0609fa?w=400&h=300&fit=crop',
-  },
-  {
-    id: '6',
-    title: 'Basketball Game',
-    description: 'Pickup basketball at the local court',
-    location: 'Madison Square Park',
-    lat: 40.7380,
-    lng: -73.9855,
-    activity: 'sports',
-    date: '2024-08-20',
-    time: '17:00',
-    spots_available: 6,
-    attendees_count: 5,
-    image_url: 'https://images.unsplash.com/photo-1546519638-68711109e7e4?w=400&h=300&fit=crop',
-  },
-  {
-    id: '7',
-    title: 'Coffee & Code',
-    description: 'Developers hangout for coffee and coding',
-    location: 'Tech Hub Cafe',
-    lat: 40.7505,
-    lng: -73.9680,
-    activity: 'coffee',
-    date: '2024-08-21',
-    time: '09:00',
-    spots_available: 8,
-    attendees_count: 3,
-    image_url: 'https://images.unsplash.com/photo-1442512595331-e89e73853f31?w=400&h=300&fit=crop',
-  },
-  {
-    id: '8',
-    title: 'Mountain Trail Adventure',
-    description: 'Challenging hike with amazing views',
-    location: 'Bear Mountain State Park',
-    lat: 41.3186,
-    lng: -73.9850,
-    activity: 'hiking',
-    date: '2024-08-22',
-    time: '08:30',
-    spots_available: 10,
-    attendees_count: 6,
-    image_url: 'https://images.unsplash.com/photo-1540959375944-7049f642e9a5?w=400&h=300&fit=crop',
-  },
-];
-
-export const ACTIVITIES = {
+export const ACTIVITIES: Record<string, { label: string; color: string }> = {
   coffee: { label: 'Coffee', color: 'bg-amber-100 text-amber-800' },
   hiking: { label: 'Hiking', color: 'bg-green-100 text-green-800' },
   dining: { label: 'Dining', color: 'bg-orange-100 text-orange-800' },
@@ -176,69 +60,150 @@ export const ACTIVITIES = {
   sports: { label: 'Sports', color: 'bg-blue-100 text-blue-800' },
 };
 
-// Get plans from Supabase or fallback to mock data
+// Get plans from Supabase (no mock data fallback)
 export async function getPlans(): Promise<Plan[]> {
+  console.log('[dataUtils] getPlans() called - fetching from Supabase...');
   try {
     const supabase = createClient();
+    console.log('[dataUtils] Supabase client created, querying plans table...');
+    
     const { data, error } = await supabase
       .from('plans')
       .select('*')
       .order('created_at', { ascending: false });
 
     if (error) {
-      console.warn('Error fetching plans from Supabase:', error);
-      return mockPlans;
+      console.error('[dataUtils] Supabase error fetching plans:', error.message);
+      throw new Error(`Supabase error: ${error.message}`);
     }
 
-    return data || mockPlans;
+    console.log(`[dataUtils] Successfully fetched ${data?.length || 0} plans from Supabase`);
+    
+    // Map Supabase schema to Plan interface
+    const mappedPlans: Plan[] = (data || []).map((item: any) => ({
+      id: item.id,
+      title: item.title,
+      description: item.description || '',
+      location: item.venue_name || '',
+      lat: item.latitude || 0,
+      lng: item.longitude || 0,
+      activity: 'coffee', // Default, would need activity_type mapping
+      date: item.start_time ? new Date(item.start_time).toISOString().split('T')[0] : '',
+      time: item.start_time ? new Date(item.start_time).toTimeString().slice(0, 5) : '',
+      spots_available: item.max_participants || 0,
+      attendees_count: item.current_participants || 0,
+      image_url: undefined,
+    }));
+    
+    return mappedPlans;
   } catch (error) {
-    console.warn('Failed to connect to Supabase, using mock data:', error);
-    return mockPlans;
+    console.error('[dataUtils] Failed to fetch plans from Supabase:', error);
+    throw error;
   }
 }
 
-// Get nearby plans
+// Get nearby plans (filtering by activity)
 export function getNearbyPlans(
   plans: Plan[],
   activity?: ActivityType,
   maxDistance: number = 5
 ): Plan[] {
+  console.log(`[dataUtils] getNearbyPlans() called - activity: ${activity || 'all'}, maxDistance: ${maxDistance}km`);
   let filtered = plans;
 
   if (activity) {
     filtered = filtered.filter(p => p.activity === activity);
+    console.log(`[dataUtils] Filtered by activity '${activity}': ${filtered.length} plans remaining`);
   }
 
-  // For demo: return all filtered plans (in real app, use geospatial queries)
-  // Mock distance calculation would filter, but we'll return all for demo purposes
-  // In production, use Supabase PostGIS for real distance filtering
   return filtered;
 }
 
 // Create a new plan in Supabase
 export async function createPlan(plan: Omit<Plan, 'id'>): Promise<Plan | null> {
+  console.log('[dataUtils] createPlan() called:', plan);
   try {
     const supabase = createClient();
+    
+    // Get the current user
+    const { data: { user } } = await supabase.auth.getUser();
+    console.log('[dataUtils] Current user:', user?.id || 'not authenticated');
+    
+    if (!user) {
+      console.error('[dataUtils] Cannot create plan: user not authenticated');
+      return null;
+    }
+    
+    // Map Plan interface to Supabase schema
+    // Note: activity_type_id is nullable - we'll try to find a matching activity type
+    const dbPlan: any = {
+      host_id: user.id,
+      title: plan.title,
+      description: plan.description,
+      venue_name: plan.location,
+      latitude: plan.lat,
+      longitude: plan.lng,
+      start_time: `${plan.date}T${plan.time}:00`,
+      end_time: `${plan.date}T${plan.time}:00`,
+      max_participants: plan.spots_available,
+      current_participants: 1,
+      is_public: true,
+      status: 'active',
+    };
+
+    // Try to find matching activity_type_id
+    try {
+      const activityName = plan.activity.charAt(0).toUpperCase() + plan.activity.slice(1);
+      const { data: activityType } = await supabase
+        .from('activity_types')
+        .select('id')
+        .ilike('name', activityName)
+        .single();
+      
+      if (activityType) {
+        dbPlan.activity_type_id = activityType.id;
+      } else {
+        // Use the first activity type as default
+        const { data: defaultType } = await supabase
+          .from('activity_types')
+          .select('id')
+          .limit(1)
+          .single();
+        if (defaultType) {
+          dbPlan.activity_type_id = defaultType.id;
+        }
+      }
+    } catch (e) {
+      console.warn('[dataUtils] Could not find activity_type_id, trying without it');
+    }
+    
+    console.log('[dataUtils] Inserting plan into Supabase:', dbPlan);
+    
     const { data, error } = await supabase
       .from('plans')
-      .insert([plan])
+      .insert([dbPlan])
       .select()
       .single();
 
     if (error) {
-      console.error('Error creating plan:', error);
+      console.error('[dataUtils] Error creating plan:', error.message);
       return null;
     }
 
-    return data;
+    console.log('[dataUtils] Plan created successfully:', data);
+    return {
+      ...plan,
+      id: data.id,
+    };
   } catch (error) {
-    console.error('Failed to create plan:', error);
+    console.error('[dataUtils] Failed to create plan:', error);
     return null;
   }
 }
 
 // Get a single plan by ID
 export async function getPlanById(id: string): Promise<Plan | null> {
+  console.log(`[dataUtils] getPlanById() called - id: ${id}`);
   try {
     const supabase = createClient();
     const { data, error } = await supabase
@@ -248,19 +213,34 @@ export async function getPlanById(id: string): Promise<Plan | null> {
       .single();
 
     if (error) {
-      console.warn('Error fetching plan:', error);
-      return mockPlans.find(p => p.id === id) || null;
+      console.error('[dataUtils] Error fetching plan:', error.message);
+      throw new Error(`Supabase error: ${error.message}`);
     }
 
-    return data;
+    console.log('[dataUtils] Plan fetched:', data?.id);
+    return {
+      id: data.id,
+      title: data.title,
+      description: data.description || '',
+      location: data.venue_name || '',
+      lat: data.latitude || 0,
+      lng: data.longitude || 0,
+      activity: 'coffee',
+      date: data.start_time ? new Date(data.start_time).toISOString().split('T')[0] : '',
+      time: data.start_time ? new Date(data.start_time).toTimeString().slice(0, 5) : '',
+      spots_available: data.max_participants || 0,
+      attendees_count: data.current_participants || 0,
+      image_url: undefined,
+    };
   } catch (error) {
-    console.warn('Failed to fetch plan:', error);
-    return mockPlans.find(p => p.id === id) || null;
+    console.error('[dataUtils] Failed to fetch plan:', error);
+    throw error;
   }
 }
 
 // Request to join a plan
 export async function requestToJoinPlan(planId: string, userId: string): Promise<JoinRequest | null> {
+  console.log(`[dataUtils] requestToJoinPlan() called - planId: ${planId}, userId: ${userId}`);
   try {
     const supabase = createClient();
     const { data, error } = await supabase
@@ -270,19 +250,21 @@ export async function requestToJoinPlan(planId: string, userId: string): Promise
       .single();
 
     if (error) {
-      console.error('Error requesting to join:', error);
+      console.error('[dataUtils] Error requesting to join:', error.message);
       return null;
     }
 
+    console.log('[dataUtils] Join request created:', data?.id);
     return data;
   } catch (error) {
-    console.error('Failed to request join:', error);
+    console.error('[dataUtils] Failed to request join:', error);
     return null;
   }
 }
 
 // Approve a join request (for plan host only)
 export async function approveJoinRequest(requestId: string, userId: string): Promise<boolean> {
+  console.log(`[dataUtils] approveJoinRequest() called - requestId: ${requestId}, userId: ${userId}`);
   try {
     const supabase = createClient();
     const { error } = await supabase
@@ -291,15 +273,18 @@ export async function approveJoinRequest(requestId: string, userId: string): Pro
       .eq('id', requestId)
       .eq('user_id', userId);
 
-    return !error;
+    const success = !error;
+    console.log(`[dataUtils] Join request approved: ${success}`);
+    return success;
   } catch (error) {
-    console.error('Failed to approve join:', error);
+    console.error('[dataUtils] Failed to approve join:', error);
     return false;
   }
 }
 
 // Decline a join request (for plan host only)
 export async function declineJoinRequest(requestId: string): Promise<boolean> {
+  console.log(`[dataUtils] declineJoinRequest() called - requestId: ${requestId}`);
   try {
     const supabase = createClient();
     const { error } = await supabase
@@ -307,80 +292,58 @@ export async function declineJoinRequest(requestId: string): Promise<boolean> {
       .update({ status: 'declined' })
       .eq('id', requestId);
 
-    return !error;
+    const success = !error;
+    console.log(`[dataUtils] Join request declined: ${success}`);
+    return success;
   } catch (error) {
-    console.error('Failed to decline join:', error);
+    console.error('[dataUtils] Failed to decline join:', error);
     return false;
   }
 }
 
-// Mock participants
-export const mockParticipants: Participant[] = [
-  { id: '1', name: 'Sarah', avatar_url: 'https://i.pravatar.cc/150?img=1', role: 'host' },
-  { id: '2', name: 'Alex', avatar_url: 'https://i.pravatar.cc/150?img=2', role: 'member' },
-  { id: '3', name: 'Jordan', avatar_url: 'https://i.pravatar.cc/150?img=3', role: 'member' },
-  { id: '4', name: 'Casey', avatar_url: 'https://i.pravatar.cc/150?img=4', role: 'member' },
-  { id: '5', name: 'Morgan', avatar_url: 'https://i.pravatar.cc/150?img=5', role: 'member' },
-];
+// Get messages for a plan from Supabase
+export async function getMessagesForPlan(planId: string): Promise<ChatMessage[]> {
+  console.log(`[dataUtils] getMessagesForPlan() called - planId: ${planId}`);
+  try {
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from('chat_messages')
+      .select('*')
+      .eq('plan_id', planId)
+      .order('created_at', { ascending: true });
 
-// Mock messages
-export const mockMessages: ChatMessage[] = [
-  {
-    id: '1',
-    plan_id: '1',
-    sender: mockParticipants[0],
-    content: 'Hey everyone! Looking forward to seeing you all tomorrow morning.',
-    timestamp: '2024-08-14T18:30:00Z',
-    type: 'message',
-  },
-  {
-    id: '2',
-    plan_id: '1',
-    sender: mockParticipants[1],
-    content: 'Count me in! Should I get there early to grab a table?',
-    timestamp: '2024-08-14T18:35:00Z',
-    type: 'message',
-  },
-  {
-    id: '3',
-    plan_id: '1',
-    sender: mockParticipants[0],
-    content: 'I\'ll be there by 8am sharp. The coffee there is amazing!',
-    timestamp: '2024-08-14T18:40:00Z',
-    type: 'message',
-  },
-  {
-    id: '4',
-    plan_id: '1',
-    sender: mockParticipants[2],
-    content: 'Excited to join! This is my first meetup with this group.',
-    timestamp: '2024-08-14T19:00:00Z',
-    type: 'message',
-  },
-  {
-    id: '5',
-    plan_id: '1',
-    sender: { id: 'system', name: 'System', avatar_url: '' },
-    content: 'Morgan joined the group',
-    timestamp: '2024-08-14T19:05:00Z',
-    type: 'system',
-  },
-  {
-    id: '6',
-    plan_id: '1',
-    sender: mockParticipants[3],
-    content: 'Oh nice! See you all there. I\'ll bring some pastries!',
-    timestamp: '2024-08-14T19:10:00Z',
-    type: 'message',
-  },
-];
+    if (error) {
+      console.error('[dataUtils] Error fetching messages:', error.message);
+      return [];
+    }
 
-// Get mock messages for a plan
-export function getMessagesForPlan(planId: string): ChatMessage[] {
-  return mockMessages.filter(m => m.plan_id === planId);
+    console.log(`[dataUtils] Fetched ${data?.length || 0} messages`);
+    return data || [];
+  } catch (error) {
+    console.error('[dataUtils] Failed to fetch messages:', error);
+    return [];
+  }
 }
 
-// Get participants for a plan
-export function getParticipantsForPlan(planId: string): Participant[] {
-  return mockParticipants;
+// Get participants for a plan from Supabase
+export async function getParticipantsForPlan(planId: string): Promise<Participant[]> {
+  console.log(`[dataUtils] getParticipantsForPlan() called - planId: ${planId}`);
+  try {
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from('plan_participants')
+      .select('*')
+      .eq('plan_id', planId);
+
+    if (error) {
+      console.error('[dataUtils] Error fetching participants:', error.message);
+      return [];
+    }
+
+    console.log(`[dataUtils] Fetched ${data?.length || 0} participants`);
+    return data || [];
+  } catch (error) {
+    console.error('[dataUtils] Failed to fetch participants:', error);
+    return [];
+  }
 }

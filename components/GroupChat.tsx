@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Plan, Participant, ChatMessage, mockParticipants, mockMessages } from '@/lib/dataUtils';
+import { Plan, Participant, ChatMessage, getParticipantsForPlan, getMessagesForPlan } from '@/lib/dataUtils';
 import { Button } from '@/components/ui/button';
 import { Send, Users, AlertCircle } from 'lucide-react';
 import ParticipantsList from './ParticipantsList';
@@ -18,8 +18,8 @@ interface GroupChatProps {
 }
 
 export default function GroupChat({ plan, onClose, userId }: GroupChatProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>(mockMessages);
-  const [participants, setParticipants] = useState<Participant[]>(mockParticipants);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [participants, setParticipants] = useState<Participant[]>([]);
   const [showParticipants, setShowParticipants] = useState(false);
   const [currentUserId] = useState(userId || '2'); // Real user ID if provided
   const [isLoading, setIsLoading] = useState(false);
@@ -116,7 +116,7 @@ export default function GroupChat({ plan, onClose, userId }: GroupChatProps) {
     const tempMessage: ChatMessage = {
       id: tempId,
       plan_id: plan.id,
-      sender: participants.find(p => p.id === currentUserId) || mockParticipants[1],
+      sender: participants.find(p => p.id === currentUserId) || { id: currentUserId, name: 'You', avatar_url: '' },
       content,
       timestamp: new Date().toISOString(),
       type: 'message',

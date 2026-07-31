@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
 import MyPlansDashboard from '@/components/MyPlansDashboard';
-import { Loader2, LogOut, User } from 'lucide-react';
+import { Loader2, ArrowLeft, User } from 'lucide-react';
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -38,16 +38,6 @@ export default function DashboardPage() {
     checkAuth();
   }, [router]);
 
-  const handleLogout = async () => {
-    try {
-      const supabase = createClient();
-      await supabase.auth.signOut();
-      router.push('/');
-    } catch (error) {
-      console.error('Logout failed:', error);
-    }
-  };
-
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -77,6 +67,16 @@ export default function DashboardPage() {
               <p className="text-sm font-medium text-slate-900">{user.email}</p>
               <p className="text-xs text-slate-600">Member</p>
             </div>
+            <Link href="/">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+              >
+                <ArrowLeft size={16} />
+                <span className="hidden sm:inline">Discover</span>
+              </Button>
+            </Link>
             <Link href="/profile">
               <Button
                 variant="outline"
@@ -87,15 +87,6 @@ export default function DashboardPage() {
                 <span className="hidden sm:inline">Profile</span>
               </Button>
             </Link>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleLogout}
-              className="gap-2"
-            >
-              <LogOut size={16} />
-              <span className="hidden sm:inline">Logout</span>
-            </Button>
           </div>
         </div>
       </header>

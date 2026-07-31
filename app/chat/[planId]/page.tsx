@@ -3,17 +3,28 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import GroupChat from '@/components/GroupChat';
-import { mockPlans } from '@/lib/dataUtils';
+import { getPlanById, type Plan } from '@/lib/dataUtils';
 
 export default function ChatPage() {
   const router = useRouter();
   const params = useParams();
-  const [plan, setPlan] = useState<typeof mockPlans[0] | null>(null);
+  const [plan, setPlan] = useState<Plan | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (params.planId) {
-      const foundPlan = mockPlans.find(p => p.id === params.planId);
-      setPlan(foundPlan || null);
+      console.log(`[ChatPage] Fetching plan with ID: ${params.planId}`);
+      setLoading(true);
+      getPlanById(params.planId as string)
+        .then((data) => {
+          console.log('[ChatPage] Plan fetched:', data ? 'found' : 'not found');
+          setPlan(data);
+          setLoading(false);
+        })
+        .catch((err) => {
+          console.error('[ChatPage] Error fetching plan:', err);
+          setLoading(false);
+        });
     }
   }, [params.planId]);
 
