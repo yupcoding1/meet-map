@@ -20,8 +20,8 @@ export default function MessageItem({ message, isOwn }: MessageItemProps) {
 
   if (message.type === 'system') {
     return (
-      <div className="flex justify-center py-2">
-        <div className="bg-slate-100 text-slate-600 text-xs font-medium px-3 py-1.5 rounded-full">
+      <div className="flex justify-center py-3">
+        <div className="bg-gradient-to-r from-slate-100 to-slate-50 text-slate-600 text-xs font-medium px-4 py-2 rounded-full border border-slate-200 shadow-sm">
           {message.content}
         </div>
       </div>

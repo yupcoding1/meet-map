@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
 import MyPlansDashboard from '@/components/MyPlansDashboard';
-import { Loader2, LogOut } from 'lucide-react';
+import { Loader2, LogOut, User } from 'lucide-react';
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -71,11 +72,21 @@ export default function DashboardPage() {
             <h1 className="text-3xl font-bold text-slate-900">My Plans</h1>
             <p className="text-slate-600 text-sm mt-1">Manage your hosted and joined plans</p>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <div className="text-right hidden sm:block">
               <p className="text-sm font-medium text-slate-900">{user.email}</p>
               <p className="text-xs text-slate-600">Member</p>
             </div>
+            <Link href="/profile">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+              >
+                <User size={16} />
+                <span className="hidden sm:inline">Profile</span>
+              </Button>
+            </Link>
             <Button
               variant="outline"
               size="sm"

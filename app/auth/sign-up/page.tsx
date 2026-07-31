@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { createClient } from '@/lib/supabase/client';
-import { Mail, Lock, User, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
+import { Mail, Lock, User, AlertCircle, CheckCircle2, Loader2, Globe } from 'lucide-react';
 
 export default function SignUpPage() {
   const router = useRouter();
@@ -80,6 +80,30 @@ export default function SignUpPage() {
       }, 2000);
     } catch (err) {
       setError('An unexpected error occurred');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleSignUp = async () => {
+    setError('');
+    setLoading(true);
+
+    try {
+      const supabase = createClient();
+      const { error: oauthError } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
+
+      if (oauthError) {
+        setError(oauthError.message);
+      }
+    } catch (err) {
+      setError('Failed to sign up with Google');
       console.error(err);
     } finally {
       setLoading(false);
@@ -217,6 +241,28 @@ export default function SignUpPage() {
               {loading ? 'Creating account...' : 'Create Account'}
             </Button>
           </form>
+
+          {/* Divider */}
+          <div className="relative my-6">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-slate-200" />
+            </div>
+            <div className="relative flex justify-center text-sm">
+              <span className="px-2 bg-white text-slate-600">Or sign up with</span>
+            </div>
+          </div>
+
+          {/* Google Sign Up Button */}
+          <Button
+            type="button"
+            variant="outline"
+            onClick={handleGoogleSignUp}
+            disabled={loading}
+            className="w-full h-11 rounded-lg gap-2 mb-4"
+          >
+            <Globe size={18} />
+            Sign up with Google
+          </Button>
 
           {/* Divider */}
           <div className="relative my-6">
