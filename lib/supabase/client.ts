@@ -18,6 +18,9 @@ export function createClient() {
       auth: {
         getUser: async () => ({ data: { user: null }, error: null }),
         signOut: async () => ({ error: null }),
+        signInWithPassword: async () => ({ data: { user: null, session: null }, error: { message: 'Supabase not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local' } }),
+        signInWithOAuth: async () => ({ data: { provider: null, url: null }, error: { message: 'Supabase not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local' } }),
+        signUp: async () => ({ data: { user: null, session: null }, error: { message: 'Supabase not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local' } }),
       },
       from: () => ({
         select: () => ({ order: () => ({ eq: () => ({ single: async () => ({ data: null, error: null }) }) }) }),

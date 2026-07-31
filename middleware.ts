@@ -16,7 +16,7 @@ const PUBLIC_ROUTES = [
   '/',
 ]
 
-export async function proxy(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname
   
   // Check if route is protected
@@ -27,13 +27,9 @@ export async function proxy(request: NextRequest) {
     // Get the session via updateSession which checks auth
     const response = await updateSession(request)
     
-    // Check if user has a valid session from the response
-    const cookieHeader = response.headers.get('set-cookie')
-    const hasSession = request.cookies.get('sb-auth-token')?.value
-    
-    // If no session, redirect to login
-    if (!hasSession && !cookieHeader) {
-      return NextResponse.redirect(new URL('/auth/login', request.url))
+    // If the response is a redirect (no user), return it immediately
+    if (response.status >= 300 && response.status < 400) {
+      return response
     }
     
     return response

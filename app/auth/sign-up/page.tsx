@@ -56,7 +56,7 @@ export default function SignUpPage() {
 
     try {
       const supabase = createClient();
-      const { error: signUpError } = await supabase.auth.signUp({
+      const { data, error: signUpError } = await supabase.auth.signUp({
         email: formData.email,
         password: formData.password,
         options: {
@@ -74,6 +74,14 @@ export default function SignUpPage() {
         return;
       }
 
+      // If email confirmation is disabled in Supabase, a session is returned immediately
+      if (data?.session) {
+        // User is already signed in, go to dashboard
+        router.push('/dashboard');
+        return;
+      }
+
+      // If no session, email confirmation is required
       setSignUpSuccess(true);
       setTimeout(() => {
         router.push('/auth/sign-up-success');
