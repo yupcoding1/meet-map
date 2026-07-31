@@ -3,103 +3,118 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Plan, Participant, ChatMessage, mockParticipants, mockMessages } from '@/lib/dataUtils';
 import { Button } from '@/components/ui/button';
-import { Send, Users } from 'lucide-react';
+import { Send, Users, AlertCircle } from 'lucide-react';
 import ParticipantsList from './ParticipantsList';
 import MessageList from './MessageList';
 import MessageInput from './MessageInput';
 import { formatDistanceToNow } from 'date-fns';
 import { createClient } from '@/lib/supabase/client';
+import { getChatMessages, sendChatMessage } from '@/lib/actions/chat';
 
 interface GroupChatProps {
   plan: Plan;
   onClose?: () => void;
+  userId?: string; // Real authenticated user ID
 }
 
-export default function GroupChat({ plan, onClose }: GroupChatProps) {
+export default function GroupChat({ plan, onClose, userId }: GroupChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>(mockMessages);
   const [participants, setParticipants] = useState<Participant[]>(mockParticipants);
   const [showParticipants, setShowParticipants] = useState(false);
-  const [currentUserId] = useState('2'); // Mock current user (Alex)
+  const [currentUserId] = useState(userId || '2'); // Real user ID if provided
+  const [isLoading, setIsLoading] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const supabaseRef = useRef(createClient());
+  const subscriptionRef = useRef<any>(null);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Setup real-time subscription for messages
+  // Load initial messages and setup real-time subscription
   useEffect(() => {
-    try {
-      const supabase = supabaseRef.current;
-      
-      // Check if Supabase is properly configured
-      if (!supabase || !supabase.channel) {
-        console.log('[v0] Supabase not configured, using mock mode');
-        return;
-      }
-      
-      // Subscribe to new messages for this plan
-      const channel = supabase.channel(`chat:${plan.id}`);
-      
-      if (!channel || !channel.on) {
-        return;
-      }
-
-      const subscription = channel
-        .on(
-          'broadcast',
-          { event: 'new_message' },
-          (payload: { new: ChatMessage }) => {
-            setMessages((prev) => {
-              // Avoid duplicate messages
-              if (prev.some(m => m.id === payload.new.id)) {
-                return prev;
-              }
-              return [...prev, payload.new];
-            });
-          }
-        )
-        .on(
-          'broadcast',
-          { event: 'participant_joined' },
-          (payload: { participant: Participant }) => {
-            // Add system message
-            const systemMessage: ChatMessage = {
-              id: `system_${Date.now()}`,
-              plan_id: plan.id,
-              sender: { id: 'system', name: 'System', avatar_url: '' },
-              content: `${payload.participant.name} joined the group`,
-              timestamp: new Date().toISOString(),
-              type: 'system',
-            };
-            setMessages((prev) => [...prev, systemMessage]);
-            
-            // Add participant if not already there
-            setParticipants((prev) => {
-              if (prev.some(p => p.id === payload.participant.id)) {
-                return prev;
-              }
-              return [...prev, payload.participant];
-            });
-          }
-        )
-        .subscribe();
-
-      return () => {
-        if (subscription && subscription.unsubscribe) {
-          subscription.unsubscribe();
+    const initChat = async () => {
+      try {
+        setIsLoading(true);
+        setConnectionError(null);
+        
+        // Load initial messages (only if user is authenticated)
+        if (userId) {
+          const chatMessages = await getChatMessages(plan.id);
+          setMessages(chatMessages);
         }
-      };
-    } catch (error) {
-      console.log('[v0] Supabase subscription setup failed:', error);
-      return;
-    }
-  }, [plan.id]);
+      } catch (error: any) {
+        console.error('[v0] Error loading chat messages:', error);
+        setConnectionError(error.message || 'Failed to load messages');
+      } finally {
+        setIsLoading(false);
+      }
+    };
 
-  const handleSendMessage = useCallback((content: string) => {
-    const newMessage: ChatMessage = {
-      id: `${currentUserId}_${Date.now()}`,
+    initChat();
+
+    // Setup real-time subscription for new messages
+    const setupSubscription = () => {
+      try {
+        const supabase = supabaseRef.current;
+        
+        // Only subscribe if Supabase is configured
+        if (!supabase?.channel) {
+          console.log('[v0] Supabase not configured, skipping subscriptions');
+          return;
+        }
+        
+        const channel = supabase.channel(`chat:${plan.id}`, {
+          config: {
+            broadcast: { self: false }, // Don't receive own broadcasts, we update locally
+          },
+        });
+
+        // Subscribe to database changes on chat_messages
+        const subscription = channel
+          .on(
+            'postgres_changes',
+            {
+              event: 'INSERT',
+              schema: 'public',
+              table: 'chat_messages',
+              filter: `plan_id=eq.${plan.id}`,
+            },
+            (payload) => {
+              // Avoid duplicate messages (we add them locally when sending)
+              setMessages((prev) => {
+                if (prev.some(m => m.id === payload.new.id)) {
+                  return prev;
+                }
+                return [...prev, payload.new];
+              });
+            }
+          )
+          .subscribe();
+
+        subscriptionRef.current = subscription;
+      } catch (error) {
+        console.log('[v0] Subscription setup skipped:', error);
+      }
+    };
+
+    setupSubscription();
+
+    return () => {
+      if (subscriptionRef.current) {
+        subscriptionRef.current.unsubscribe();
+      }
+    };
+  }, [plan.id, userId]);
+
+  const handleSendMessage = useCallback(async (content: string) => {
+    if (!content.trim()) return;
+
+    const tempId = `temp_${Date.now()}`;
+    const tempMessage: ChatMessage = {
+      id: tempId,
       plan_id: plan.id,
       sender: participants.find(p => p.id === currentUserId) || mockParticipants[1],
       content,
@@ -107,25 +122,29 @@ export default function GroupChat({ plan, onClose }: GroupChatProps) {
       type: 'message',
     };
     
-    // Add message immediately to UI
-    setMessages((prev) => [...prev, newMessage]);
+    // Optimistically add message to UI
+    setMessages((prev) => [...prev, tempMessage]);
     
-    // Try to broadcast to other clients via Supabase
-    try {
-      const supabase = supabaseRef.current;
-      const channel = supabase?.channel(`chat:${plan.id}`);
-      if (channel && channel.send) {
-        channel.send({
-          type: 'broadcast',
-          event: 'new_message',
-          payload: { new: newMessage },
-        });
+    // Send to database if user is authenticated
+    if (userId) {
+      try {
+        const savedMessage = await sendChatMessage(plan.id, content);
+        
+        // Replace temp message with real one
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === tempId ? { ...savedMessage, sender: tempMessage.sender } : msg
+          )
+        );
+      } catch (error: any) {
+        console.error('[v0] Failed to send message:', error);
+        // Remove the temp message on error
+        setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
+        setConnectionError('Failed to send message. Try again.');
+        setTimeout(() => setConnectionError(null), 3000);
       }
-    } catch (error) {
-      console.log('[v0] Failed to send message via Supabase:', error);
-      // Message was already added to UI, so continue
     }
-  }, [currentUserId, plan.id, participants]);
+  }, [currentUserId, plan.id, participants, userId]);
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
@@ -210,9 +229,22 @@ export default function GroupChat({ plan, onClose }: GroupChatProps) {
         </div>
       </header>
 
+      {/* Connection Error Alert */}
+      {connectionError && (
+        <div className="bg-red-50 border-b border-red-200 px-4 py-3 md:px-6 flex items-center gap-2">
+          <AlertCircle size={18} className="text-red-600" />
+          <p className="text-sm text-red-600">{connectionError}</p>
+        </div>
+      )}
+
       {/* Messages */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-4xl mx-auto px-4 py-6 md:px-6 space-y-4">
+          {isLoading && (
+            <div className="text-center py-8 text-slate-500">
+              <p>Loading messages...</p>
+            </div>
+          )}
           <MessageList messages={messages} currentUserId={currentUserId} />
           <div ref={messagesEndRef} />
         </div>

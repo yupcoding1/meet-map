@@ -19,16 +19,17 @@ CREATE TABLE IF NOT EXISTS user_profiles (
   latitude DECIMAL(10, 8),
   longitude DECIMAL(11, 8),
   location_name TEXT,
-  last_location_update TIMESTAMP DEFAULT NOW(),
+  last_location_update TIMESTAMPTZ DEFAULT NOW(),
   plans_hosted INTEGER DEFAULT 0,
   plans_joined INTEGER DEFAULT 0,
   average_rating DECIMAL(3, 2),
-  created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Create index on user location for geo queries
-CREATE INDEX idx_user_profiles_location ON user_profiles USING GIST (ST_SetSRID(ST_MakePoint(longitude, latitude), 4326));
+-- Create index on user location for geo queries (using GEOGRAPHY for better performance)
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS location_point GEOGRAPHY(POINT, 4326) GENERATED ALWAYS AS (ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)) STORED;
+CREATE INDEX idx_user_profiles_location ON user_profiles USING GIST (location_point);
 
 -- ============================================================================
 -- 2. ACTIVITY_TYPES TABLE (Reference)
@@ -39,7 +40,7 @@ CREATE TABLE IF NOT EXISTS activity_types (
   description TEXT,
   icon_emoji TEXT,
   color_hex TEXT DEFAULT '#00D9FF',
-  created_at TIMESTAMP DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Insert default activity types
@@ -69,15 +70,15 @@ CREATE TABLE IF NOT EXISTS plans (
   latitude DECIMAL(10, 8) NOT NULL,
   longitude DECIMAL(11, 8) NOT NULL,
   location_point GEOGRAPHY(POINT, 4326) GENERATED ALWAYS AS (ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)) STORED,
-  start_time TIMESTAMP NOT NULL,
-  end_time TIMESTAMP NOT NULL,
+  start_time TIMESTAMPTZ NOT NULL,
+  end_time TIMESTAMPTZ NOT NULL,
   max_participants INTEGER,
   current_participants INTEGER DEFAULT 1,
   difficulty_level TEXT CHECK (difficulty_level IN ('easy', 'moderate', 'hard')),
   is_public BOOLEAN DEFAULT TRUE,
   status TEXT DEFAULT 'active' CHECK (status IN ('active', 'cancelled', 'completed')),
-  created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Create geospatial index for efficient distance queries
@@ -94,10 +95,10 @@ CREATE TABLE IF NOT EXISTS plan_participants (
   plan_id UUID NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
   user_id UUID NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE,
   status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'left')),
-  joined_at TIMESTAMP DEFAULT NOW(),
+  joined_at TIMESTAMPTZ DEFAULT NOW(),
   rating INTEGER CHECK (rating >= 1 AND rating <= 5),
   review_text TEXT,
-  reviewed_at TIMESTAMP,
+  reviewed_at TIMESTAMPTZ,
   UNIQUE(plan_id, user_id)
 );
 
@@ -113,9 +114,9 @@ CREATE TABLE IF NOT EXISTS join_requests (
   plan_id UUID NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
   user_id UUID NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE,
   message TEXT,
-  created_at TIMESTAMP DEFAULT NOW(),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
   status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
-  responded_at TIMESTAMP,
+  responded_at TIMESTAMPTZ,
   UNIQUE(plan_id, user_id)
 );
 
@@ -129,10 +130,10 @@ CREATE INDEX idx_join_requests_status ON join_requests(status);
 CREATE TABLE IF NOT EXISTS chat_messages (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   plan_id UUID NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
-  sender_id UUID NOT NULL REFERENCES user_profiles(id) ON DELETE SET NULL,
+  sender_id UUID REFERENCES user_profiles(id) ON DELETE SET NULL,
   content TEXT NOT NULL,
   message_type TEXT DEFAULT 'message' CHECK (message_type IN ('message', 'system', 'announcement')),
-  created_at TIMESTAMP DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX idx_chat_messages_plan ON chat_messages(plan_id);
@@ -146,7 +147,7 @@ CREATE TABLE IF NOT EXISTS interest_tags (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT UNIQUE NOT NULL,
   color_hex TEXT DEFAULT '#00D9FF',
-  created_at TIMESTAMP DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Insert default interests
@@ -172,7 +173,7 @@ CREATE TABLE IF NOT EXISTS user_interest_mappings (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE,
   interest_id UUID NOT NULL REFERENCES interest_tags(id) ON DELETE CASCADE,
-  created_at TIMESTAMP DEFAULT NOW(),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(user_id, interest_id)
 );
 
@@ -187,7 +188,7 @@ CREATE TABLE IF NOT EXISTS plan_images (
   plan_id UUID NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
   image_url TEXT NOT NULL,
   uploaded_by UUID NOT NULL REFERENCES user_profiles(id),
-  created_at TIMESTAMP DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX idx_plan_images_plan ON plan_images(plan_id);
@@ -200,15 +201,15 @@ CREATE TABLE IF NOT EXISTS user_presence (
   user_id UUID NOT NULL UNIQUE REFERENCES user_profiles(id) ON DELETE CASCADE,
   plan_id UUID REFERENCES plans(id) ON DELETE SET NULL,
   status TEXT DEFAULT 'online' CHECK (status IN ('online', 'away', 'offline')),
-  last_seen TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW()
+  last_seen TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- ============================================================================
 -- UTILITY FUNCTIONS
 -- ============================================================================
 
--- Get nearby plans within radius (in km)
+-- Get nearby plans within radius (in km) - Uses indexed location_point column for performance
 CREATE OR REPLACE FUNCTION get_nearby_plans(
   user_lat DECIMAL,
   user_lng DECIMAL,
@@ -221,7 +222,7 @@ RETURNS TABLE (
   latitude DECIMAL,
   longitude DECIMAL,
   distance_km DECIMAL,
-  start_time TIMESTAMP,
+  start_time TIMESTAMPTZ,
   activity_type TEXT,
   host_name TEXT,
   current_participants INTEGER,
@@ -243,8 +244,8 @@ FROM plans p
 JOIN activity_types at ON p.activity_type_id = at.id
 JOIN user_profiles up ON p.host_id = up.id
 WHERE ST_DWithin(
-  ST_MakePoint(p.longitude, p.latitude)::GEOGRAPHY,
-  ST_MakePoint(user_lng, user_lat)::GEOGRAPHY,
+  p.location_point,
+  ST_SetSRID(ST_MakePoint(user_lng, user_lat), 4326)::GEOGRAPHY,
   radius_km * 1000
 )
 AND p.status = 'active'
@@ -270,8 +271,8 @@ FROM plans p
 WHERE p.id = plan_id;
 $$ LANGUAGE SQL STABLE;
 
--- Get user stats
-CREATE OR REPLACE FUNCTION get_user_stats(user_id UUID)
+-- Get user stats (renamed parameter to p_user_id to avoid shadowing column names)
+CREATE OR REPLACE FUNCTION get_user_stats(p_user_id UUID)
 RETURNS TABLE (
   plans_hosted INTEGER,
   plans_joined INTEGER,
@@ -279,12 +280,12 @@ RETURNS TABLE (
   total_connections INTEGER
 ) AS $$
 SELECT
-  (SELECT COUNT(*) FROM plans WHERE host_id = user_id AND status = 'completed'),
-  (SELECT COUNT(*) FROM plan_participants WHERE user_id = user_id AND status = 'approved'),
-  (SELECT AVG(rating) FROM plan_participants WHERE user_id = user_id AND rating IS NOT NULL),
+  (SELECT COUNT(*) FROM plans WHERE host_id = p_user_id AND status = 'completed')::INTEGER,
+  (SELECT COUNT(*) FROM plan_participants WHERE user_id = p_user_id AND status = 'approved')::INTEGER,
+  (SELECT AVG(rating) FROM plan_participants WHERE user_id = p_user_id AND rating IS NOT NULL)::DECIMAL,
   (SELECT COUNT(DISTINCT pp.user_id) FROM plan_participants pp
    JOIN plans p ON pp.plan_id = p.id
-   WHERE p.host_id = user_id OR pp.user_id = user_id)
+   WHERE p.host_id = p_user_id OR pp.user_id = p_user_id)::INTEGER
 $$ LANGUAGE SQL STABLE;
 
 -- ============================================================================
@@ -310,11 +311,21 @@ CREATE POLICY "Anyone can read active plans" ON plans FOR SELECT USING (status =
 CREATE POLICY "Users can create plans" ON plans FOR INSERT WITH CHECK (auth.uid() = host_id);
 CREATE POLICY "Users can update their own plans" ON plans FOR UPDATE USING (auth.uid() = host_id);
 
--- Plan Participants: Can read if part of plan
+-- Plan Participants: Can read if part of plan or host
 CREATE POLICY "Users can read plan participants" ON plan_participants FOR SELECT USING (
   plan_id IN (SELECT id FROM plans WHERE host_id = auth.uid() OR id IN (
     SELECT plan_id FROM plan_participants WHERE user_id = auth.uid()
   ))
+);
+-- Users can insert themselves into pending participant list
+CREATE POLICY "Users can join plans" ON plan_participants FOR INSERT WITH CHECK (
+  auth.uid() = user_id AND status = 'pending'
+);
+-- Hosts can approve or reject participants
+CREATE POLICY "Hosts can update participant status" ON plan_participants FOR UPDATE USING (
+  plan_id IN (SELECT id FROM plans WHERE host_id = auth.uid())
+) WITH CHECK (
+  plan_id IN (SELECT id FROM plans WHERE host_id = auth.uid())
 );
 
 -- Chat Messages: Can read if part of plan
@@ -335,14 +346,36 @@ CREATE POLICY "Users can read join requests" ON join_requests FOR SELECT USING (
   user_id = auth.uid() OR
   plan_id IN (SELECT id FROM plans WHERE host_id = auth.uid())
 );
+-- Users can create join requests for themselves
 CREATE POLICY "Users can create join requests" ON join_requests FOR INSERT WITH CHECK (
-  user_id = auth.uid()
+  user_id = auth.uid() AND status = 'pending'
+);
+-- Hosts can update join request status (approve/reject)
+CREATE POLICY "Hosts can respond to join requests" ON join_requests FOR UPDATE USING (
+  plan_id IN (SELECT id FROM plans WHERE host_id = auth.uid())
+) WITH CHECK (
+  plan_id IN (SELECT id FROM plans WHERE host_id = auth.uid()) AND status IN ('approved', 'rejected')
 );
 
 -- Interests: Anyone can read
 CREATE POLICY "Anyone can read interests" ON user_interest_mappings FOR SELECT USING (true);
 CREATE POLICY "Users can manage their interests" ON user_interest_mappings FOR INSERT USING (auth.uid() = user_id);
 CREATE POLICY "Users can delete their interests" ON user_interest_mappings FOR DELETE USING (auth.uid() = user_id);
+
+-- Plan Images: Plan members can read, plan members can insert
+CREATE POLICY "Plan members can view images" ON plan_images FOR SELECT USING (
+  plan_id IN (SELECT id FROM plans WHERE host_id = auth.uid() OR id IN (
+    SELECT plan_id FROM plan_participants WHERE user_id = auth.uid() AND status = 'approved'
+  ))
+);
+CREATE POLICY "Plan members can upload images" ON plan_images FOR INSERT WITH CHECK (
+  auth.uid() = uploaded_by AND plan_id IN (SELECT plan_id FROM plan_participants WHERE user_id = auth.uid())
+);
+
+-- User Presence: Users can read all presence, manage their own
+CREATE POLICY "Anyone can view online status" ON user_presence FOR SELECT USING (true);
+CREATE POLICY "Users can update their presence" ON user_presence FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can manage their presence" ON user_presence FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 
 -- ============================================================================
 -- TRIGGERS
@@ -366,31 +399,100 @@ AFTER UPDATE ON plans
 FOR EACH ROW
 EXECUTE FUNCTION update_user_stats_on_plan_complete();
 
--- Auto-update plan participants count
+-- Auto-update plan participants count when status changes
 CREATE OR REPLACE FUNCTION update_plan_participant_count()
 RETURNS TRIGGER AS $$
 BEGIN
-  IF NEW.status = 'approved' AND OLD.status != 'approved' THEN
+  IF TG_OP = 'INSERT' AND NEW.status = 'approved' THEN
     UPDATE plans
     SET current_participants = current_participants + 1
     WHERE id = NEW.plan_id;
-  ELSIF OLD.status = 'approved' AND NEW.status != 'approved' THEN
+  ELSIF TG_OP = 'UPDATE' THEN
+    IF NEW.status = 'approved' AND OLD.status != 'approved' THEN
+      UPDATE plans
+      SET current_participants = current_participants + 1
+      WHERE id = NEW.plan_id;
+    ELSIF OLD.status = 'approved' AND NEW.status != 'approved' THEN
+      UPDATE plans
+      SET current_participants = current_participants - 1
+      WHERE id = NEW.plan_id;
+    END IF;
+  ELSIF TG_OP = 'DELETE' AND OLD.status = 'approved' THEN
     UPDATE plans
     SET current_participants = current_participants - 1
-    WHERE id = NEW.plan_id;
+    WHERE id = OLD.plan_id;
   END IF;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER trigger_update_plan_participant_count
-AFTER UPDATE ON plan_participants
+AFTER INSERT OR UPDATE OR DELETE ON plan_participants
 FOR EACH ROW
 EXECUTE FUNCTION update_plan_participant_count();
 
--- Auto-create user profile when new user signs up
-CREATE OR REPLACE FUNCTION create_user_profile()
+-- Auto-update user's plans_joined count
+CREATE OR REPLACE FUNCTION update_user_plans_joined()
 RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' AND NEW.status = 'approved' THEN
+    UPDATE user_profiles
+    SET plans_joined = plans_joined + 1
+    WHERE id = NEW.user_id;
+  ELSIF TG_OP = 'UPDATE' THEN
+    IF NEW.status = 'approved' AND OLD.status != 'approved' THEN
+      UPDATE user_profiles
+      SET plans_joined = plans_joined + 1
+      WHERE id = NEW.user_id;
+    ELSIF OLD.status = 'approved' AND NEW.status != 'approved' THEN
+      UPDATE user_profiles
+      SET plans_joined = plans_joined - 1
+      WHERE id = NEW.user_id;
+    END IF;
+  ELSIF TG_OP = 'DELETE' AND OLD.status = 'approved' THEN
+    UPDATE user_profiles
+    SET plans_joined = plans_joined - 1
+    WHERE id = OLD.user_id;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_update_user_plans_joined
+AFTER INSERT OR UPDATE OR DELETE ON plan_participants
+FOR EACH ROW
+EXECUTE FUNCTION update_user_plans_joined();
+
+-- Auto-update user's average rating when they get reviewed
+CREATE OR REPLACE FUNCTION update_user_average_rating()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_new_avg DECIMAL;
+BEGIN
+  IF NEW.rating IS NOT NULL THEN
+    SELECT AVG(rating) INTO v_new_avg
+    FROM plan_participants
+    WHERE user_id = NEW.user_id AND rating IS NOT NULL;
+    
+    UPDATE user_profiles
+    SET average_rating = ROUND(v_new_avg, 2)
+    WHERE id = NEW.user_id;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_update_user_average_rating
+AFTER INSERT OR UPDATE ON plan_participants
+FOR EACH ROW
+WHEN (NEW.rating IS NOT NULL)
+EXECUTE FUNCTION update_user_average_rating();
+
+-- Auto-create user profile when new user signs up (SECURITY DEFINER to bypass RLS)
+CREATE OR REPLACE FUNCTION create_user_profile()
+RETURNS TRIGGER
+SECURITY DEFINER SET search_path = public
+AS $$
 BEGIN
   INSERT INTO user_profiles (id, email, full_name)
   VALUES (NEW.id, NEW.email, NEW.raw_user_meta_data->>'full_name')
