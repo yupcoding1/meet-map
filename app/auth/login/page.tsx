@@ -29,6 +29,8 @@ export default function LoginPage() {
       if (signInError) {
         if (signInError.message.includes('Invalid login credentials')) {
           setError('Invalid email or password');
+        } else if (signInError.message.toLowerCase().includes('email not confirmed') || signInError.message.includes('Email not confirmed')) {
+          setError('Email not confirmed. Please check your inbox and click the confirmation link, or sign up again.');
         } else {
           setError(signInError.message);
         }

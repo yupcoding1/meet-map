@@ -1,5 +1,5 @@
 -- ============================================================================
--- MEETMAP DATABASE SCHEMA
+-- MEETMAP DATABASE SCHEMA (corrected)
 -- Run this file in Supabase SQL Editor to set up the complete database
 -- ============================================================================
 
@@ -27,8 +27,8 @@ CREATE TABLE IF NOT EXISTS user_profiles (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Create index on user location for geo queries (using GEOGRAPHY for better performance)
-ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS location_point GEOGRAPHY(POINT, 4326) GENERATED ALWAYS AS (ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)) STORED;
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS location_point GEOGRAPHY(POINT, 4326)
+  GENERATED ALWAYS AS (ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)) STORED;
 CREATE INDEX idx_user_profiles_location ON user_profiles USING GIST (location_point);
 
 -- ============================================================================
@@ -43,7 +43,6 @@ CREATE TABLE IF NOT EXISTS activity_types (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Insert default activity types
 INSERT INTO activity_types (name, description, icon_emoji, color_hex) VALUES
   ('Coffee', 'Coffee meetups and cafe sessions', '☕', '#8B4513'),
   ('Gaming', 'Video games and board games', '🎮', '#FF1493'),
@@ -81,7 +80,6 @@ CREATE TABLE IF NOT EXISTS plans (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Create geospatial index for efficient distance queries
 CREATE INDEX idx_plans_location ON plans USING GIST (location_point);
 CREATE INDEX idx_plans_host ON plans(host_id);
 CREATE INDEX idx_plans_status ON plans(status);
@@ -108,6 +106,12 @@ CREATE INDEX idx_plan_participants_status ON plan_participants(status);
 
 -- ============================================================================
 -- 5. JOIN_REQUESTS TABLE (Pending Approvals)
+-- ----------------------------------------------------------------------------
+-- NOTE: this overlaps with plan_participants.status = 'pending'. Nothing in
+-- this schema keeps the two in sync automatically -- your application code
+-- is responsible for writing to both consistently. Left as-is for now since
+-- collapsing them is a data-model change, not a bug fix; worth revisiting
+-- once the MVP is validated.
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS join_requests (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -150,7 +154,6 @@ CREATE TABLE IF NOT EXISTS interest_tags (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Insert default interests
 INSERT INTO interest_tags (name, color_hex) VALUES
   ('gaming', '#FF1493'),
   ('coffee', '#8B4513'),
@@ -209,7 +212,8 @@ CREATE TABLE IF NOT EXISTS user_presence (
 -- UTILITY FUNCTIONS
 -- ============================================================================
 
--- Get nearby plans within radius (in km) - Uses indexed location_point column for performance
+-- Get nearby PUBLIC plans within radius (in km). Uses the indexed
+-- location_point column so it can actually use the GIST index.
 CREATE OR REPLACE FUNCTION get_nearby_plans(
   user_lat DECIMAL,
   user_lng DECIMAL,
@@ -234,7 +238,7 @@ SELECT
   p.venue_name,
   p.latitude,
   p.longitude,
-  ROUND(ST_DistanceSphere(ST_MakePoint(user_lng, user_lat), ST_MakePoint(p.longitude, p.latitude))::NUMERIC / 1000, 2) as distance_km,
+  ROUND((ST_Distance(p.location_point, ST_SetSRID(ST_MakePoint(user_lng, user_lat), 4326)::GEOGRAPHY))::NUMERIC / 1000, 2) AS distance_km,
   p.start_time,
   at.name,
   up.full_name,
@@ -249,29 +253,27 @@ WHERE ST_DWithin(
   radius_km * 1000
 )
 AND p.status = 'active'
+AND p.is_public = true
 AND p.start_time > NOW()
 ORDER BY distance_km ASC;
 $$ LANGUAGE SQL STABLE;
 
 -- Get plan distance from user
 CREATE OR REPLACE FUNCTION get_plan_distance(
-  plan_id UUID,
+  p_plan_id UUID,
   user_lat DECIMAL,
   user_lng DECIMAL
 )
 RETURNS DECIMAL AS $$
 SELECT ROUND(
-  ST_DistanceSphere(
-    ST_MakePoint(user_lng, user_lat),
-    ST_MakePoint(p.longitude, p.latitude)
-  )::NUMERIC / 1000,
+  (ST_Distance(p.location_point, ST_SetSRID(ST_MakePoint(user_lng, user_lat), 4326)::GEOGRAPHY))::NUMERIC / 1000,
   2
 )
 FROM plans p
-WHERE p.id = plan_id;
+WHERE p.id = p_plan_id;
 $$ LANGUAGE SQL STABLE;
 
--- Get user stats (renamed parameter to p_user_id to avoid shadowing column names)
+-- Get user stats (parameter renamed to p_user_id to avoid shadowing columns)
 CREATE OR REPLACE FUNCTION get_user_stats(p_user_id UUID)
 RETURNS TABLE (
   plans_hosted INTEGER,
@@ -292,7 +294,6 @@ $$ LANGUAGE SQL STABLE;
 -- ROW LEVEL SECURITY (RLS) POLICIES
 -- ============================================================================
 
--- Enable RLS on all tables
 ALTER TABLE user_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE plans ENABLE ROW LEVEL SECURITY;
 ALTER TABLE plan_participants ENABLE ROW LEVEL SECURITY;
@@ -302,33 +303,48 @@ ALTER TABLE user_interest_mappings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE plan_images ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_presence ENABLE ROW LEVEL SECURITY;
 
--- User Profiles: Users can read all profiles, update only their own
+-- User Profiles
 CREATE POLICY "Users can read all profiles" ON user_profiles FOR SELECT USING (true);
 CREATE POLICY "Users can update their own profile" ON user_profiles FOR UPDATE USING (auth.uid() = id);
 
--- Plans: All can read public plans
-CREATE POLICY "Anyone can read active plans" ON plans FOR SELECT USING (status = 'active' OR host_id = auth.uid());
+-- Plans: hosts always see their own; everyone else sees active + public plans,
+-- or active + private plans they've already requested/joined.
+CREATE POLICY "Users can read visible plans" ON plans FOR SELECT USING (
+  host_id = auth.uid()
+  OR (
+    status = 'active'
+    AND (
+      is_public = true
+      OR id IN (SELECT plan_id FROM plan_participants WHERE user_id = auth.uid())
+    )
+  )
+);
 CREATE POLICY "Users can create plans" ON plans FOR INSERT WITH CHECK (auth.uid() = host_id);
 CREATE POLICY "Users can update their own plans" ON plans FOR UPDATE USING (auth.uid() = host_id);
 
--- Plan Participants: Can read if part of plan or host
+-- Plan Participants
 CREATE POLICY "Users can read plan participants" ON plan_participants FOR SELECT USING (
   plan_id IN (SELECT id FROM plans WHERE host_id = auth.uid() OR id IN (
     SELECT plan_id FROM plan_participants WHERE user_id = auth.uid()
   ))
 );
--- Users can insert themselves into pending participant list
 CREATE POLICY "Users can join plans" ON plan_participants FOR INSERT WITH CHECK (
   auth.uid() = user_id AND status = 'pending'
 );
--- Hosts can approve or reject participants
+-- Hosts can change a participant's approval status (column scope enforced by trigger below)
 CREATE POLICY "Hosts can update participant status" ON plan_participants FOR UPDATE USING (
   plan_id IN (SELECT id FROM plans WHERE host_id = auth.uid())
 ) WITH CHECK (
   plan_id IN (SELECT id FROM plans WHERE host_id = auth.uid())
 );
+-- Participants can rate/review a plan they attended (column scope enforced by trigger below)
+CREATE POLICY "Participants can rate plans they attended" ON plan_participants FOR UPDATE USING (
+  auth.uid() = user_id
+) WITH CHECK (
+  auth.uid() = user_id
+);
 
--- Chat Messages: Can read if part of plan
+-- Chat Messages: host or approved participant can read/write
 CREATE POLICY "Users can read chat if member" ON chat_messages FOR SELECT USING (
   plan_id IN (
     SELECT id FROM plans WHERE host_id = auth.uid() OR id IN (
@@ -337,42 +353,46 @@ CREATE POLICY "Users can read chat if member" ON chat_messages FOR SELECT USING 
   )
 );
 CREATE POLICY "Users can insert chat messages" ON chat_messages FOR INSERT WITH CHECK (
-  auth.uid() = sender_id AND
-  plan_id IN (SELECT plan_id FROM plan_participants WHERE user_id = auth.uid() AND status = 'approved')
+  auth.uid() = sender_id AND (
+    plan_id IN (SELECT id FROM plans WHERE host_id = auth.uid())
+    OR plan_id IN (SELECT plan_id FROM plan_participants WHERE user_id = auth.uid() AND status = 'approved')
+  )
 );
 
--- Join Requests: Host can read their own, users can read their own
+-- Join Requests
 CREATE POLICY "Users can read join requests" ON join_requests FOR SELECT USING (
   user_id = auth.uid() OR
   plan_id IN (SELECT id FROM plans WHERE host_id = auth.uid())
 );
--- Users can create join requests for themselves
 CREATE POLICY "Users can create join requests" ON join_requests FOR INSERT WITH CHECK (
   user_id = auth.uid() AND status = 'pending'
 );
--- Hosts can update join request status (approve/reject)
 CREATE POLICY "Hosts can respond to join requests" ON join_requests FOR UPDATE USING (
   plan_id IN (SELECT id FROM plans WHERE host_id = auth.uid())
 ) WITH CHECK (
   plan_id IN (SELECT id FROM plans WHERE host_id = auth.uid()) AND status IN ('approved', 'rejected')
 );
 
--- Interests: Anyone can read
+-- Interests
 CREATE POLICY "Anyone can read interests" ON user_interest_mappings FOR SELECT USING (true);
-CREATE POLICY "Users can manage their interests" ON user_interest_mappings FOR INSERT USING (auth.uid() = user_id);
+CREATE POLICY "Users can manage their interests" ON user_interest_mappings FOR INSERT WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Users can delete their interests" ON user_interest_mappings FOR DELETE USING (auth.uid() = user_id);
 
--- Plan Images: Plan members can read, plan members can insert
+-- Plan Images: host or approved participant can view; same set can upload,
+-- and only as themselves (uploaded_by is always forced to match the caller).
 CREATE POLICY "Plan members can view images" ON plan_images FOR SELECT USING (
   plan_id IN (SELECT id FROM plans WHERE host_id = auth.uid() OR id IN (
     SELECT plan_id FROM plan_participants WHERE user_id = auth.uid() AND status = 'approved'
   ))
 );
 CREATE POLICY "Plan members can upload images" ON plan_images FOR INSERT WITH CHECK (
-  auth.uid() = uploaded_by AND plan_id IN (SELECT plan_id FROM plan_participants WHERE user_id = auth.uid())
+  auth.uid() = uploaded_by AND (
+    plan_id IN (SELECT id FROM plans WHERE host_id = auth.uid())
+    OR plan_id IN (SELECT plan_id FROM plan_participants WHERE user_id = auth.uid() AND status = 'approved')
+  )
 );
 
--- User Presence: Users can read all presence, manage their own
+-- User Presence
 CREATE POLICY "Anyone can view online status" ON user_presence FOR SELECT USING (true);
 CREATE POLICY "Users can update their presence" ON user_presence FOR INSERT WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Users can manage their presence" ON user_presence FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
@@ -381,7 +401,7 @@ CREATE POLICY "Users can manage their presence" ON user_presence FOR UPDATE USIN
 -- TRIGGERS
 -- ============================================================================
 
--- Auto-update user stats when plan status changes
+-- Auto-update user's plans_hosted count when a plan they host completes
 CREATE OR REPLACE FUNCTION update_user_stats_on_plan_complete()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -399,28 +419,87 @@ AFTER UPDATE ON plans
 FOR EACH ROW
 EXECUTE FUNCTION update_user_stats_on_plan_complete();
 
--- Auto-update plan participants count when status changes
+-- Enforce plan capacity: reject an approval once a plan is full.
+-- Runs BEFORE the row is written, and locks the plan row (FOR UPDATE) so two
+-- simultaneous approvals can't both squeeze past the same last spot.
+CREATE OR REPLACE FUNCTION check_plan_capacity()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_max INTEGER;
+  v_current INTEGER;
+  v_becoming_approved BOOLEAN := false;
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    v_becoming_approved := (NEW.status = 'approved');
+  ELSIF TG_OP = 'UPDATE' THEN
+    v_becoming_approved := (NEW.status = 'approved' AND OLD.status IS DISTINCT FROM 'approved');
+  END IF;
+
+  IF v_becoming_approved THEN
+    SELECT max_participants, current_participants INTO v_max, v_current
+    FROM plans WHERE id = NEW.plan_id FOR UPDATE;
+
+    IF v_max IS NOT NULL AND v_current >= v_max THEN
+      RAISE EXCEPTION 'Plan % is already full (% / %)', NEW.plan_id, v_current, v_max;
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_check_plan_capacity
+BEFORE INSERT OR UPDATE ON plan_participants
+FOR EACH ROW
+EXECUTE FUNCTION check_plan_capacity();
+
+-- Restrict which columns each side is allowed to change on plan_participants.
+-- RLS decides *whether* a row can be touched; this decides *which fields*.
+--   - The participant themselves may only edit their rating/review.
+--   - The host may only edit status (approve/reject).
+CREATE OR REPLACE FUNCTION restrict_participant_updates()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF auth.uid() = OLD.user_id THEN
+    IF NEW.status IS DISTINCT FROM OLD.status
+       OR NEW.user_id IS DISTINCT FROM OLD.user_id
+       OR NEW.plan_id IS DISTINCT FROM OLD.plan_id
+       OR NEW.joined_at IS DISTINCT FROM OLD.joined_at THEN
+      RAISE EXCEPTION 'Participants may only update their rating and review';
+    END IF;
+  ELSE
+    IF NEW.user_id IS DISTINCT FROM OLD.user_id
+       OR NEW.plan_id IS DISTINCT FROM OLD.plan_id
+       OR NEW.joined_at IS DISTINCT FROM OLD.joined_at
+       OR NEW.rating IS DISTINCT FROM OLD.rating
+       OR NEW.review_text IS DISTINCT FROM OLD.review_text
+       OR NEW.reviewed_at IS DISTINCT FROM OLD.reviewed_at THEN
+      RAISE EXCEPTION 'Hosts may only update participant status';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_restrict_participant_updates
+BEFORE UPDATE ON plan_participants
+FOR EACH ROW
+EXECUTE FUNCTION restrict_participant_updates();
+
+-- Auto-update plan participant count when status changes
 CREATE OR REPLACE FUNCTION update_plan_participant_count()
 RETURNS TRIGGER AS $$
 BEGIN
   IF TG_OP = 'INSERT' AND NEW.status = 'approved' THEN
-    UPDATE plans
-    SET current_participants = current_participants + 1
-    WHERE id = NEW.plan_id;
+    UPDATE plans SET current_participants = current_participants + 1 WHERE id = NEW.plan_id;
   ELSIF TG_OP = 'UPDATE' THEN
     IF NEW.status = 'approved' AND OLD.status != 'approved' THEN
-      UPDATE plans
-      SET current_participants = current_participants + 1
-      WHERE id = NEW.plan_id;
+      UPDATE plans SET current_participants = current_participants + 1 WHERE id = NEW.plan_id;
     ELSIF OLD.status = 'approved' AND NEW.status != 'approved' THEN
-      UPDATE plans
-      SET current_participants = current_participants - 1
-      WHERE id = NEW.plan_id;
+      UPDATE plans SET current_participants = current_participants - 1 WHERE id = NEW.plan_id;
     END IF;
   ELSIF TG_OP = 'DELETE' AND OLD.status = 'approved' THEN
-    UPDATE plans
-    SET current_participants = current_participants - 1
-    WHERE id = OLD.plan_id;
+    UPDATE plans SET current_participants = current_participants - 1 WHERE id = OLD.plan_id;
   END IF;
   RETURN NEW;
 END;
@@ -436,23 +515,15 @@ CREATE OR REPLACE FUNCTION update_user_plans_joined()
 RETURNS TRIGGER AS $$
 BEGIN
   IF TG_OP = 'INSERT' AND NEW.status = 'approved' THEN
-    UPDATE user_profiles
-    SET plans_joined = plans_joined + 1
-    WHERE id = NEW.user_id;
+    UPDATE user_profiles SET plans_joined = plans_joined + 1 WHERE id = NEW.user_id;
   ELSIF TG_OP = 'UPDATE' THEN
     IF NEW.status = 'approved' AND OLD.status != 'approved' THEN
-      UPDATE user_profiles
-      SET plans_joined = plans_joined + 1
-      WHERE id = NEW.user_id;
+      UPDATE user_profiles SET plans_joined = plans_joined + 1 WHERE id = NEW.user_id;
     ELSIF OLD.status = 'approved' AND NEW.status != 'approved' THEN
-      UPDATE user_profiles
-      SET plans_joined = plans_joined - 1
-      WHERE id = NEW.user_id;
+      UPDATE user_profiles SET plans_joined = plans_joined - 1 WHERE id = NEW.user_id;
     END IF;
   ELSIF TG_OP = 'DELETE' AND OLD.status = 'approved' THEN
-    UPDATE user_profiles
-    SET plans_joined = plans_joined - 1
-    WHERE id = OLD.user_id;
+    UPDATE user_profiles SET plans_joined = plans_joined - 1 WHERE id = OLD.user_id;
   END IF;
   RETURN NEW;
 END;
@@ -473,10 +544,8 @@ BEGIN
     SELECT AVG(rating) INTO v_new_avg
     FROM plan_participants
     WHERE user_id = NEW.user_id AND rating IS NOT NULL;
-    
-    UPDATE user_profiles
-    SET average_rating = ROUND(v_new_avg, 2)
-    WHERE id = NEW.user_id;
+
+    UPDATE user_profiles SET average_rating = ROUND(v_new_avg, 2) WHERE id = NEW.user_id;
   END IF;
   RETURN NEW;
 END;
@@ -488,7 +557,7 @@ FOR EACH ROW
 WHEN (NEW.rating IS NOT NULL)
 EXECUTE FUNCTION update_user_average_rating();
 
--- Auto-create user profile when new user signs up (SECURITY DEFINER to bypass RLS)
+-- Auto-create user profile when new user signs up
 CREATE OR REPLACE FUNCTION create_user_profile()
 RETURNS TRIGGER
 SECURITY DEFINER SET search_path = public
@@ -509,8 +578,8 @@ EXECUTE FUNCTION create_user_profile();
 -- ============================================================================
 -- END OF SCHEMA
 -- ============================================================================
--- All tables are now ready for use. Next steps:
+-- Next steps:
 -- 1. Run this schema in Supabase SQL Editor
--- 2. Set up Google OAuth in Supabase Authentication
+-- 2. Set up Google OAuth in Supabase Authentication (optional)
 -- 3. Update .env.local with NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY
 -- ============================================================================
