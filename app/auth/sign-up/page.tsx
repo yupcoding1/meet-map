@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { createClient } from '@/lib/supabase/client';
-import { Mail, Lock, User, AlertCircle, CheckCircle2, Loader2, Chrome } from 'lucide-react';
+import { Mail, Lock, User, AlertCircle, CheckCircle2, Loader2, Globe } from 'lucide-react';
 
 export default function SignUpPage() {
   const router = useRouter();
@@ -260,7 +260,7 @@ export default function SignUpPage() {
             disabled={loading}
             className="w-full h-11 rounded-lg gap-2 mb-4"
           >
-            <Chrome size={18} />
+            <Globe size={18} />
             Sign up with Google
           </Button>
 
