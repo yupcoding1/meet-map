@@ -160,4 +160,22 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* Ensure input fields have proper dark text color for contrast */
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  input[type="date"],
+  input[type="time"],
+  input[type="search"],
+  textarea,
+  select {
+    color: oklch(0.145 0 0) !important;
+    -webkit-text-fill-color: oklch(0.145 0 0) !important;
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: oklch(0.556 0 0) !important;
+    -webkit-text-fill-color: oklch(0.556 0 0) !important;
+  }
 }

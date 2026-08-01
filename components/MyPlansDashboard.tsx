@@ -3,46 +3,96 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import MyPlanCard from './MyPlanCard';
-import { getPlans, type Plan } from '@/lib/dataUtils';
-import { Calendar, Users, Clock, ArrowRight } from 'lucide-react';
+import { getHostedPlans, getJoinedPlans, getMyJoinRequests, getIncomingJoinRequests, approveJoinRequest, declineJoinRequest, updatePlan, deletePlan, type Plan } from '@/lib/dataUtils';
+import { createClient } from '@/lib/supabase/client';
+import { Users, ArrowRight, Check, X } from 'lucide-react';
 import Link from 'next/link';
+import CreatePlanModal from './CreatePlanModal';
 
 type TabType = 'hosting' | 'joined' | 'requests';
 
+interface IncomingRequest {
+  plan: Plan;
+  request: { id: string; status: string; created_at: string; plan_id: string; user_id: string };
+  requester: { id: string; name: string; avatar_url?: string };
+}
+
 export default function MyPlansDashboard() {
   const [activeTab, setActiveTab] = useState<TabType>('hosting');
-  const [allPlans, setAllPlans] = useState<Plan[]>([]);
+  const [hostedPlans, setHostedPlans] = useState<Plan[]>([]);
+  const [joinedPlans, setJoinedPlans] = useState<Plan[]>([]);
+  const [myRequests, setMyRequests] = useState<{ plan: Plan; request: any }[]>([]);
+  const [incomingRequests, setIncomingRequests] = useState<IncomingRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [editingPlan, setEditingPlan] = useState<Plan | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
-  // Fetch plans from Supabase on mount
   useEffect(() => {
-    console.log('[MyPlansDashboard] Component mounted, fetching plans from Supabase...');
-    setLoading(true);
-    setError(null);
-    
-    getPlans()
-      .then((data) => {
-        console.log(`[MyPlansDashboard] Plans loaded successfully: ${data.length} plans`);
-        setAllPlans(data);
+    const loadData = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const supabase = createClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+          setError('Please sign in to view your plans.');
+          setLoading(false);
+          return;
+        }
+        const [hosted, joined, myReqs, incomingReqs] = await Promise.all([
+          getHostedPlans(user.id),
+          getJoinedPlans(user.id),
+          getMyJoinRequests(user.id),
+          getIncomingJoinRequests(user.id),
+        ]);
+        setHostedPlans(hosted);
+        setJoinedPlans(joined);
+        setMyRequests(myReqs);
+        setIncomingRequests(incomingReqs);
+      } catch (err) {
+        console.error('[MyPlansDashboard] Failed to load:', err);
+        setError('Failed to load plans.');
+      } finally {
         setLoading(false);
-      })
-      .catch((err) => {
-        console.error('[MyPlansDashboard] Failed to load plans:', err);
-        setError('Failed to load plans from database.');
-        setLoading(false);
-      });
+      }
+    };
+    loadData();
   }, []);
 
-  // For now, show all plans (in production, filter by user ID)
-  const hostedPlans: Plan[] = allPlans;
-  const joinedPlans: Plan[] = [];
-  const requestPlans: Plan[] = [];
+  const handleApprove = async (requestId: string, userId: string) => {
+    const success = await approveJoinRequest(requestId, userId);
+    if (success) setIncomingRequests(prev => prev.filter(r => r.request.id !== requestId));
+  };
+
+  const handleDecline = async (requestId: string) => {
+    const success = await declineJoinRequest(requestId);
+    if (success) setIncomingRequests(prev => prev.filter(r => r.request.id !== requestId));
+  };
+
+  const handleEdit = (plan: Plan) => {
+    console.log('[MyPlansDashboard] Editing plan:', plan.id);
+    setEditingPlan(plan);
+    setIsEditModalOpen(true);
+  };
+
+  const handleDelete = async (plan: Plan) => {
+    if (!window.confirm(`Delete "${plan.title}"? This will remove the plan, all join requests, participants, and chat messages.`)) return;
+    console.log('[MyPlansDashboard] Deleting plan:', plan.id);
+    const success = await deletePlan(plan.id);
+    if (success) {
+      setHostedPlans(prev => prev.filter(p => p.id !== plan.id));
+      setIncomingRequests(prev => prev.filter(r => r.plan.id !== plan.id));
+      console.log('[MyPlansDashboard] Plan deleted');
+    } else {
+      console.error('[MyPlansDashboard] Failed to delete plan');
+    }
+  };
 
   const tabs: { id: TabType; label: string; count: number }[] = [
     { id: 'hosting', label: 'Hosting', count: hostedPlans.length },
     { id: 'joined', label: 'Joined', count: joinedPlans.length },
-    { id: 'requests', label: 'Requests', count: requestPlans.length },
+    { id: 'requests', label: 'Requests', count: myRequests.length + incomingRequests.length },
   ];
 
   const renderEmptyState = (tab: TabType) => {
@@ -92,7 +142,7 @@ export default function MyPlansDashboard() {
       case 'joined':
         return joinedPlans;
       case 'requests':
-        return requestPlans;
+        return myRequests.map(r => r.plan);
       default:
         return [];
     }
@@ -152,32 +202,130 @@ export default function MyPlansDashboard() {
 
       {/* Tab Content */}
       <div>
-        {isEmpty ? (
-          renderEmptyState(activeTab)
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {plans.map((plan) => {
-              let status = 'Upcoming';
-              if (activeTab === 'hosting' && plan.attendees_count >= plan.spots_available) {
-                status = 'Full';
-              } else if (activeTab === 'requests') {
-                status = 'Pending approval';
-              } else if (activeTab === 'joined') {
-                status = 'Upcoming';
-              }
+        {activeTab === 'hosting' && (
+          <>
+            {incomingRequests.length > 0 && (
+              <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-xl">
+                <h3 className="font-semibold text-blue-900 mb-3 flex items-center gap-2">
+                  <Users size={18} />
+                  Incoming Requests ({incomingRequests.length})
+                </h3>
+                <div className="space-y-2">
+                  {incomingRequests.map(req => (
+                    <div key={req.request.id} className="flex items-center justify-between p-3 bg-white rounded-lg border border-blue-100">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-teal-100 flex items-center justify-center text-teal-600 text-xs font-semibold">
+                          {req.requester.name?.[0]?.toUpperCase() || '?'}
+                        </div>
+                        <div>
+                          <span className="font-medium text-slate-900">{req.requester.name}</span>
+                          <span className="text-sm text-slate-500 ml-2">wants to join "{req.plan.title}"</span>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button size="sm" onClick={() => handleApprove(req.request.id, req.request.user_id)} className="bg-teal-500 hover:bg-teal-600">
+                          <Check size={14} className="mr-1" />Approve
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => handleDecline(req.request.id)} className="text-red-600 border-red-200">
+                          <X size={14} className="mr-1" />Decline
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {hostedPlans.length === 0 ? renderEmptyState('hosting') : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {hostedPlans.map(plan => (
+                  <MyPlanCard
+                    key={plan.id}
+                    plan={plan}
+                    status={plan.attendees_count >= plan.spots_available ? 'Full' : 'Upcoming'}
+                    tab="hosting"
+                    incomingRequestCount={incomingRequests.filter(r => r.plan.id === plan.id).length}
+                    onViewRequests={() => setActiveTab('requests')}
+                    onEdit={handleEdit}
+                    onDelete={handleDelete}
+                  />
+                ))}
+              </div>
+            )}
+          </>
+        )}
 
-              return (
-                <MyPlanCard
-                  key={plan.id}
-                  plan={plan}
-                  status={status}
-                  tab={activeTab}
-                />
-              );
-            })}
-          </div>
+        {activeTab === 'joined' && (
+          joinedPlans.length === 0 ? renderEmptyState('joined') : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {joinedPlans.map(plan => (
+                <MyPlanCard key={plan.id} plan={plan} status="Upcoming" tab="joined" />
+              ))}
+            </div>
+          )
+        )}
+
+        {activeTab === 'requests' && (
+          myRequests.length === 0 && incomingRequests.length === 0 ? renderEmptyState('requests') : (
+            <div className="space-y-6">
+              {myRequests.length > 0 && (
+                <div>
+                  <h3 className="font-semibold text-slate-900 mb-3">My Pending Requests</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {myRequests.map(({ plan, request }) => (
+                      <MyPlanCard key={request.id} plan={plan} status="Pending approval" tab="requests" />
+                    ))}
+                  </div>
+                </div>
+              )}
+              {incomingRequests.length > 0 && (
+                <div>
+                  <h3 className="font-semibold text-slate-900 mb-3">Incoming Requests</h3>
+                  <div className="space-y-3">
+                    {incomingRequests.map(req => (
+                      <div key={req.request.id} className="flex items-center justify-between p-4 bg-white rounded-xl border border-slate-200">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-teal-100 flex items-center justify-center text-teal-600 font-semibold">
+                            {req.requester.name?.[0]?.toUpperCase() || '?'}
+                          </div>
+                          <div>
+                            <p className="font-medium text-slate-900">{req.requester.name}</p>
+                            <p className="text-sm text-slate-500">wants to join <span className="font-medium">{req.plan.title}</span></p>
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button size="sm" onClick={() => handleApprove(req.request.id, req.request.user_id)} className="bg-teal-500 hover:bg-teal-600">
+                            <Check size={14} className="mr-1" />Approve
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => handleDecline(req.request.id)} className="text-red-600 border-red-200">
+                            <X size={14} className="mr-1" />Decline
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )
         )}
       </div>
+
+      {/* Edit Plan Modal */}
+      <CreatePlanModal
+        isOpen={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+        planToEdit={editingPlan}
+        onUpdate={async (updatedPlan) => {
+          if (editingPlan) {
+            const result = await updatePlan(editingPlan.id, updatedPlan);
+            if (result) {
+              setHostedPlans(prev => prev.map(p => p.id === result.id ? result : p));
+              console.log('[MyPlansDashboard] Plan updated:', result.id);
+            }
+          }
+          setIsEditModalOpen(false);
+        }}
+      />
     </div>
   );
 }

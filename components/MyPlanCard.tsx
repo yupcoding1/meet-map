@@ -2,7 +2,7 @@
 
 import { ACTIVITIES, type Plan } from '@/lib/dataUtils';
 import { Button } from '@/components/ui/button';
-import { Calendar, MapPin, Users, Clock, MoreVertical, Check, X, MessageCircle } from 'lucide-react';
+import { Calendar, MapPin, Users, Clock, MoreVertical, Check, X, MessageCircle, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import Link from 'next/link';
 
@@ -10,11 +10,15 @@ interface MyPlanCardProps {
   plan: Plan;
   status: 'Upcoming' | 'Pending approval' | 'Full' | 'Completed';
   tab: 'hosting' | 'joined' | 'requests';
+  incomingRequestCount?: number;
+  onViewRequests?: () => void;
+  onEdit?: (plan: Plan) => void;
+  onDelete?: (plan: Plan) => void;
 }
 
-export default function MyPlanCard({ plan, status, tab }: MyPlanCardProps) {
+export default function MyPlanCard({ plan, status, tab, incomingRequestCount = 0, onViewRequests, onEdit, onDelete }: MyPlanCardProps) {
   const [showMenu, setShowMenu] = useState(false);
-  const activity = ACTIVITIES[plan.activity];
+  const activity = ACTIVITIES[plan.activity] || { label: 'General', color: 'bg-slate-100 text-slate-800' };
 
   const getStatusColor = () => {
     switch (status) {
@@ -57,7 +61,6 @@ export default function MyPlanCard({ plan, status, tab }: MyPlanCardProps) {
         />
         <div className="absolute top-3 left-3 flex items-center gap-2">
           <span className={`inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-full ${activity.color}`}>
-            {activity.icon}
             {activity.label}
           </span>
         </div>
@@ -105,28 +108,55 @@ export default function MyPlanCard({ plan, status, tab }: MyPlanCardProps) {
               <Button
                 variant="outline"
                 size="sm"
+                onClick={onViewRequests}
+                className="flex-1 rounded-lg"
+              >
+                View Requests
+                {incomingRequestCount > 0 && (
+                  <span className="ml-1 inline-flex items-center justify-center w-4 h-4 text-xs font-semibold bg-blue-500 text-white rounded-full">
+                    {incomingRequestCount}
+                  </span>
+                )}
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => onEdit?.(plan)}
+                className="flex-1 rounded-lg"
+              >
+                Edit
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => onDelete?.(plan)}
+                className="rounded-lg text-red-600 border-red-200 hover:border-red-300"
+                title="Delete plan"
+              >
+                <Trash2 size={14} />
+              </Button>
+            </>
+          )}
+
+          {tab === 'hosting' && status === 'Full' && (
+            <div className="flex gap-2 w-full">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onViewRequests}
                 className="flex-1 rounded-lg"
               >
                 View Requests
               </Button>
               <Button
                 size="sm"
-                className="flex-1 rounded-lg"
+                variant="outline"
+                onClick={() => onDelete?.(plan)}
+                className="rounded-lg text-red-600 border-red-200 hover:border-red-300"
+                title="Delete plan"
               >
-                Edit
+                <Trash2 size={14} />
               </Button>
-            </>
-          )}
-
-          {tab === 'hosting' && status === 'Full' && (
-            <Button
-              variant="outline"
-              disabled
-              size="sm"
-              className="w-full rounded-lg"
-            >
-              Plan Full
-            </Button>
+            </div>
           )}
 
           {tab === 'joined' && (

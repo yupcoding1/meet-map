@@ -225,7 +225,7 @@ export default function ProfilePage() {
         <div className="max-w-2xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Link href="/dashboard">
-              <Button variant="ghost" size="sm" className="rounded-lg">
+              <Button variant="outline" size="sm" className="rounded-lg gap-2">
                 <ArrowLeft size={18} />
                 <span className="hidden sm:inline">Dashboard</span>
               </Button>

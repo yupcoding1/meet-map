@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plan, JoinRequest, ACTIVITIES, requestToJoinPlan } from '@/lib/dataUtils';
+import { Plan, ACTIVITIES, requestToJoinPlan } from '@/lib/dataUtils';
 import { Button } from '@/components/ui/button';
+import { createClient } from '@/lib/supabase/client';
 import {
   X,
   MapPin,
@@ -11,51 +12,6 @@ import {
   Users,
   ArrowLeft,
 } from 'lucide-react';
-
-// Mock current user
-const CURRENT_USER_ID = 'user-123';
-const CURRENT_USER_NAME = 'You';
-
-// Mock host info - in real app, fetch from database
-const PLAN_HOSTS: Record<string, { id: string; name: string; avatar: string }> = {
-  '1': { id: 'host-1', name: 'Sarah', avatar: 'https://i.pravatar.cc/150?img=1' },
-  '2': { id: 'host-2', name: 'Mike', avatar: 'https://i.pravatar.cc/150?img=2' },
-  '3': { id: 'host-3', name: 'Emma', avatar: 'https://i.pravatar.cc/150?img=3' },
-  '4': { id: 'host-4', name: 'James', avatar: 'https://i.pravatar.cc/150?img=4' },
-  '5': { id: 'host-5', name: 'Lisa', avatar: 'https://i.pravatar.cc/150?img=5' },
-  '6': { id: 'host-6', name: 'Alex', avatar: 'https://i.pravatar.cc/150?img=6' },
-  '7': { id: 'host-7', name: 'Tom', avatar: 'https://i.pravatar.cc/150?img=7' },
-  '8': { id: 'host-8', name: 'Nina', avatar: 'https://i.pravatar.cc/150?img=8' },
-};
-
-// Mock join requests - in real app, fetch from database
-const MOCK_JOIN_REQUESTS: Record<string, JoinRequest[]> = {
-  '3': [
-    {
-      id: 'req-1',
-      user_id: 'user-456',
-      plan_id: '3',
-      status: 'pending',
-      user: { id: 'user-456', name: 'John', avatar_url: 'https://i.pravatar.cc/150?img=10' },
-    },
-    {
-      id: 'req-2',
-      user_id: 'user-789',
-      plan_id: '3',
-      status: 'pending',
-      user: { id: 'user-789', name: 'Rachel', avatar_url: 'https://i.pravatar.cc/150?img=11' },
-    },
-  ],
-  '5': [
-    {
-      id: 'req-3',
-      user_id: 'user-999',
-      plan_id: '5',
-      status: 'pending',
-      user: { id: 'user-999', name: 'Chris', avatar_url: 'https://i.pravatar.cc/150?img=12' },
-    },
-  ],
-};
 
 interface PlanDetailViewProps {
   plan: Plan;
@@ -66,42 +22,43 @@ interface PlanDetailViewProps {
 export default function PlanDetailView({ plan, isOpen, onClose }: PlanDetailViewProps) {
   const [hasRequested, setHasRequested] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [joinRequests, setJoinRequests] = useState<JoinRequest[]>(
-    MOCK_JOIN_REQUESTS[plan.id] || []
-  );
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [isHost, setIsHost] = useState(false);
 
-  const host = PLAN_HOSTS[plan.id];
-  const activity = ACTIVITIES[plan.activity];
+  useEffect(() => {
+    const loadUser = async () => {
+      console.log('[PlanDetailView] Loading user for plan:', plan.id);
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        console.log('[PlanDetailView] Current user:', user.id);
+        setCurrentUserId(user.id);
+        if (plan.host_id === user.id) {
+          setIsHost(true);
+          console.log('[PlanDetailView] User is the host');
+        }
+      }
+    };
+    loadUser();
+  }, [plan.id, plan.host_id]);
+
+  const activity = ACTIVITIES[plan.activity] || { label: 'General', color: 'bg-slate-100 text-slate-800' };
   const isFull = plan.attendees_count >= plan.spots_available;
-  const isHost = host?.id === CURRENT_USER_ID;
-  const pendingRequests = joinRequests.filter(r => r.status === 'pending');
 
   const handleRequestJoin = async () => {
-    if (hasRequested || isLoading || isHost) return;
+    if (hasRequested || isLoading || isHost || !currentUserId) return;
 
+    console.log('[PlanDetailView] Requesting to join plan:', plan.id);
     setIsLoading(true);
-    const success = await requestToJoinPlan(plan.id, CURRENT_USER_ID);
+    const result = await requestToJoinPlan(plan.id, currentUserId);
     setIsLoading(false);
 
-    if (success) {
+    if (result) {
+      console.log('[PlanDetailView] Join request sent successfully');
       setHasRequested(true);
+    } else {
+      console.error('[PlanDetailView] Failed to send join request');
     }
-  };
-
-  const handleApprove = (requestId: string, userId: string) => {
-    setJoinRequests(prev =>
-      prev.map(r =>
-        r.id === requestId ? { ...r, status: 'approved' } : r
-      )
-    );
-  };
-
-  const handleDecline = (requestId: string) => {
-    setJoinRequests(prev =>
-      prev.map(r =>
-        r.id === requestId ? { ...r, status: 'declined' } : r
-      )
-    );
   };
 
   if (!isOpen) return null;
@@ -151,21 +108,12 @@ export default function PlanDetailView({ plan, isOpen, onClose }: PlanDetailView
               </div>
             </div>
 
-            {/* Title and Host */}
+            {/* Title */}
             <div className="mb-6">
               <h1 className="text-3xl font-bold text-slate-900 mb-4">{plan.title}</h1>
-              
-              {host && (
-                <div className="flex items-center gap-3 p-4 bg-slate-50 rounded-xl mb-4">
-                  <img
-                    src={host.avatar}
-                    alt={host.name}
-                    className="w-12 h-12 rounded-full"
-                  />
-                  <div>
-                    <p className="text-sm text-slate-600">Hosted by</p>
-                    <p className="font-semibold text-slate-900">{host.name}</p>
-                  </div>
+              {isHost && (
+                <div className="p-3 bg-teal-50 border border-teal-200 rounded-lg">
+                  <p className="text-sm text-teal-800 font-medium">You are hosting this plan</p>
                 </div>
               )}
             </div>
@@ -185,11 +133,11 @@ export default function PlanDetailView({ plan, isOpen, onClose }: PlanDetailView
                 <div>
                   <p className="text-sm text-slate-600">Date</p>
                   <p className="font-medium text-slate-900">
-                    {new Date(plan.date + 'T00:00:00').toLocaleDateString('en-US', {
+                    {plan.date ? new Date(plan.date + 'T00:00:00').toLocaleDateString('en-US', {
                       weekday: 'long',
                       month: 'long',
                       day: 'numeric',
-                    })}
+                    }) : 'TBD'}
                   </p>
                 </div>
               </div>
@@ -198,7 +146,7 @@ export default function PlanDetailView({ plan, isOpen, onClose }: PlanDetailView
                 <Clock size={20} className="text-teal-500 flex-shrink-0 mt-1" />
                 <div>
                   <p className="text-sm text-slate-600">Time</p>
-                  <p className="font-medium text-slate-900">{plan.time}</p>
+                  <p className="font-medium text-slate-900">{plan.time || 'TBD'}</p>
                 </div>
               </div>
             </div>
@@ -225,12 +173,12 @@ export default function PlanDetailView({ plan, isOpen, onClose }: PlanDetailView
 
               {/* Progress Bar */}
               <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden mb-4">
-                <div
-                  className="h-full bg-teal-500 transition-all duration-300"
-                  style={{
-                    width: `${(plan.attendees_count / plan.spots_available) * 100}%`,
-                  }}
-                />
+                  <div
+                    className="h-full bg-teal-500 transition-all duration-300"
+                    style={{
+                      width: `${plan.spots_available > 0 ? (plan.attendees_count / plan.spots_available) * 100 : 0}%`,
+                    }}
+                  />
               </div>
 
               {/* Attendee Avatars */}
@@ -251,49 +199,8 @@ export default function PlanDetailView({ plan, isOpen, onClose }: PlanDetailView
               </div>
             </div>
 
-            {/* Host View - Join Requests */}
-            {isHost && pendingRequests.length > 0 && (
-              <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-xl">
-                <h3 className="font-semibold text-blue-900 mb-3">Pending Join Requests</h3>
-                <div className="space-y-2">
-                  {pendingRequests.map(request => (
-                    <div
-                      key={request.id}
-                      className="flex items-center justify-between p-3 bg-white rounded-lg border border-blue-100"
-                    >
-                      <div className="flex items-center gap-3">
-                        <img
-                          src={request.user.avatar_url || 'https://i.pravatar.cc/150?img=99'}
-                          alt={request.user.name}
-                          className="w-8 h-8 rounded-full"
-                        />
-                        <span className="font-medium text-slate-900">{request.user.name}</span>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          variant="default"
-                          onClick={() => handleApprove(request.id, request.user_id)}
-                          className="bg-teal-500 hover:bg-teal-600"
-                        >
-                          Approve
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleDecline(request.id)}
-                        >
-                          Decline
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
             {/* CTA Button */}
-            {!isHost && (
+            {!isHost && currentUserId && (
               <div className="mt-6">
                 {isFull ? (
                   <Button disabled className="w-full" size="lg">
@@ -313,6 +220,12 @@ export default function PlanDetailView({ plan, isOpen, onClose }: PlanDetailView
                     {isLoading ? 'Sending...' : 'Request to Join'}
                   </Button>
                 )}
+              </div>
+            )}
+
+            {!currentUserId && (
+              <div className="mt-6 p-4 bg-amber-50 border border-amber-200 rounded-lg text-center">
+                <p className="text-sm text-amber-800">Sign in to request joining this plan</p>
               </div>
             )}
           </div>

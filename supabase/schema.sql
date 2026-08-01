@@ -322,6 +322,7 @@ CREATE POLICY "Users can read visible plans" ON plans FOR SELECT USING (
 );
 CREATE POLICY "Users can create plans" ON plans FOR INSERT WITH CHECK (auth.uid() = host_id);
 CREATE POLICY "Users can update their own plans" ON plans FOR UPDATE USING (auth.uid() = host_id);
+CREATE POLICY "Users can delete their own plans" ON plans FOR DELETE USING (auth.uid() = host_id);
 
 -- Plan Participants
 -- Note: This policy avoids recursion by only checking user_id = auth.uid()

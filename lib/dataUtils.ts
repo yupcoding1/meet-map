@@ -15,6 +15,7 @@ export interface Plan {
   spots_available: number;
   attendees_count: number;
   image_url?: string;
+  host_id?: string;
 }
 
 export interface User {
@@ -60,63 +61,48 @@ export const ACTIVITIES: Record<string, { label: string; color: string }> = {
   sports: { label: 'Sports', color: 'bg-blue-100 text-blue-800' },
 };
 
-// Get plans from Supabase (no mock data fallback)
+// Helper: Map a Supabase plan row to the Plan interface
+function mapPlan(item: any): Plan {
+  return {
+    id: item.id,
+    title: item.title,
+    description: item.description || '',
+    location: item.venue_name || '',
+    lat: item.latitude || 0,
+    lng: item.longitude || 0,
+    activity: 'coffee',
+    date: item.start_time ? new Date(item.start_time).toISOString().split('T')[0] : '',
+    time: item.start_time ? new Date(item.start_time).toTimeString().slice(0, 5) : '',
+    spots_available: item.max_participants || 0,
+    attendees_count: item.current_participants || 0,
+    image_url: undefined,
+    host_id: item.host_id,
+  };
+}
+
+// Get all plans from Supabase
 export async function getPlans(): Promise<Plan[]> {
-  console.log('[dataUtils] getPlans() called - fetching from Supabase...');
+  console.log('[dataUtils] getPlans() called');
   try {
     const supabase = createClient();
-    console.log('[dataUtils] Supabase client created, querying plans table...');
-    
     const { data, error } = await supabase
       .from('plans')
       .select('*')
       .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('[dataUtils] Supabase error fetching plans:', error.message);
-      throw new Error(`Supabase error: ${error.message}`);
-    }
-
-    console.log(`[dataUtils] Successfully fetched ${data?.length || 0} plans from Supabase`);
-    
-    // Map Supabase schema to Plan interface
-    const mappedPlans: Plan[] = (data || []).map((item: any) => ({
-      id: item.id,
-      title: item.title,
-      description: item.description || '',
-      location: item.venue_name || '',
-      lat: item.latitude || 0,
-      lng: item.longitude || 0,
-      activity: 'coffee', // Default, would need activity_type mapping
-      date: item.start_time ? new Date(item.start_time).toISOString().split('T')[0] : '',
-      time: item.start_time ? new Date(item.start_time).toTimeString().slice(0, 5) : '',
-      spots_available: item.max_participants || 0,
-      attendees_count: item.current_participants || 0,
-      image_url: undefined,
-    }));
-    
-    return mappedPlans;
+    if (error) throw new Error(`Supabase error: ${error.message}`);
+    const plans = (data || []).map(mapPlan);
+    console.log(`[dataUtils] Fetched ${plans.length} plans`);
+    return plans;
   } catch (error) {
-    console.error('[dataUtils] Failed to fetch plans from Supabase:', error);
+    console.error('[dataUtils] Failed to fetch plans:', error);
     throw error;
   }
 }
 
-// Get nearby plans (filtering by activity)
-export function getNearbyPlans(
-  plans: Plan[],
-  activity?: ActivityType,
-  maxDistance: number = 5
-): Plan[] {
-  console.log(`[dataUtils] getNearbyPlans() called - activity: ${activity || 'all'}, maxDistance: ${maxDistance}km`);
-  let filtered = plans;
-
-  if (activity) {
-    filtered = filtered.filter(p => p.activity === activity);
-    console.log(`[dataUtils] Filtered by activity '${activity}': ${filtered.length} plans remaining`);
-  }
-
-  return filtered;
+// Filter plans by activity
+export function getNearbyPlans(plans: Plan[], activity?: ActivityType, maxDistance: number = 5): Plan[] {
+  if (!activity) return plans;
+  return plans.filter(p => p.activity === activity);
 }
 
 // Create a new plan in Supabase
@@ -201,6 +187,65 @@ export async function createPlan(plan: Omit<Plan, 'id'>): Promise<Plan | null> {
   }
 }
 
+// Delete a plan and all related data (cascades via DB foreign keys)
+export async function deletePlan(planId: string): Promise<boolean> {
+  console.log(`[dataUtils] deletePlan() - planId: ${planId}`);
+  try {
+    const supabase = createClient();
+    const { error } = await supabase
+      .from('plans')
+      .delete()
+      .eq('id', planId);
+
+    if (error) {
+      console.error('[dataUtils] Error deleting plan:', error.message);
+      return false;
+    }
+    console.log('[dataUtils] Plan deleted successfully');
+    return true;
+  } catch (error) {
+    console.error('[dataUtils] Failed to delete plan:', error);
+    return false;
+  }
+}
+
+// Update an existing plan in Supabase
+export async function updatePlan(planId: string, updates: Partial<Omit<Plan, 'id'>>): Promise<Plan | null> {
+  console.log(`[dataUtils] updatePlan() - planId: ${planId}`);
+  try {
+    const supabase = createClient();
+    const dbUpdates: any = {};
+    if (updates.title) dbUpdates.title = updates.title;
+    if (updates.description !== undefined) dbUpdates.description = updates.description;
+    if (updates.location) dbUpdates.venue_name = updates.location;
+    if (updates.lat) dbUpdates.latitude = updates.lat;
+    if (updates.lng) dbUpdates.longitude = updates.lng;
+    if (updates.date && updates.time) {
+      dbUpdates.start_time = `${updates.date}T${updates.time}:00`;
+      dbUpdates.end_time = `${updates.date}T${updates.time}:00`;
+    }
+    if (updates.spots_available) dbUpdates.max_participants = updates.spots_available;
+    dbUpdates.updated_at = new Date().toISOString();
+
+    const { data, error } = await supabase
+      .from('plans')
+      .update(dbUpdates)
+      .eq('id', planId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('[dataUtils] Error updating plan:', error.message);
+      return null;
+    }
+    console.log('[dataUtils] Plan updated:', data.id);
+    return mapPlan(data);
+  } catch (error) {
+    console.error('[dataUtils] Failed to update plan:', error);
+    return null;
+  }
+}
+
 // Get a single plan by ID
 export async function getPlanById(id: string): Promise<Plan | null> {
   console.log(`[dataUtils] getPlanById() called - id: ${id}`);
@@ -218,20 +263,7 @@ export async function getPlanById(id: string): Promise<Plan | null> {
     }
 
     console.log('[dataUtils] Plan fetched:', data?.id);
-    return {
-      id: data.id,
-      title: data.title,
-      description: data.description || '',
-      location: data.venue_name || '',
-      lat: data.latitude || 0,
-      lng: data.longitude || 0,
-      activity: 'coffee',
-      date: data.start_time ? new Date(data.start_time).toISOString().split('T')[0] : '',
-      time: data.start_time ? new Date(data.start_time).toTimeString().slice(0, 5) : '',
-      spots_available: data.max_participants || 0,
-      attendees_count: data.current_participants || 0,
-      image_url: undefined,
-    };
+    return mapPlan(data);
   } catch (error) {
     console.error('[dataUtils] Failed to fetch plan:', error);
     throw error;
@@ -240,7 +272,7 @@ export async function getPlanById(id: string): Promise<Plan | null> {
 
 // Request to join a plan
 export async function requestToJoinPlan(planId: string, userId: string): Promise<JoinRequest | null> {
-  console.log(`[dataUtils] requestToJoinPlan() called - planId: ${planId}, userId: ${userId}`);
+  console.log(`[dataUtils] requestToJoinPlan() - planId: ${planId}`);
   try {
     const supabase = createClient();
     const { data, error } = await supabase
@@ -250,6 +282,11 @@ export async function requestToJoinPlan(planId: string, userId: string): Promise
       .single();
 
     if (error) {
+      // Duplicate key = already requested, return existing request as success
+      if (error.code === '23505') {
+        console.log('[dataUtils] Already requested to join this plan');
+        return { id: 'existing', user_id: userId, plan_id: planId, status: 'pending', user: { id: userId, name: '' } };
+      }
       console.error('[dataUtils] Error requesting to join:', error.message);
       return null;
     }
@@ -264,18 +301,50 @@ export async function requestToJoinPlan(planId: string, userId: string): Promise
 
 // Approve a join request (for plan host only)
 export async function approveJoinRequest(requestId: string, userId: string): Promise<boolean> {
-  console.log(`[dataUtils] approveJoinRequest() called - requestId: ${requestId}, userId: ${userId}`);
+  console.log(`[dataUtils] approveJoinRequest() - requestId: ${requestId}`);
   try {
     const supabase = createClient();
-    const { error } = await supabase
-      .from('join_requests')
-      .update({ status: 'approved' })
-      .eq('id', requestId)
-      .eq('user_id', userId);
 
-    const success = !error;
-    console.log(`[dataUtils] Join request approved: ${success}`);
-    return success;
+    // Get the join request details (plan_id, user_id)
+    const { data: joinRequest, error: fetchError } = await supabase
+      .from('join_requests')
+      .select('plan_id, user_id')
+      .eq('id', requestId)
+      .single();
+
+    if (fetchError || !joinRequest) {
+      console.error('[dataUtils] Join request not found:', fetchError?.message);
+      return false;
+    }
+
+    // 1. Update join request status to approved
+    const { error: updateError } = await supabase
+      .from('join_requests')
+      .update({ status: 'approved', responded_at: new Date().toISOString() })
+      .eq('id', requestId);
+
+    if (updateError) {
+      console.error('[dataUtils] Error updating join request:', updateError.message);
+      return false;
+    }
+
+    // 2. Add user to plan_participants as approved
+    const { error: participantError } = await supabase
+      .from('plan_participants')
+      .insert({
+        plan_id: joinRequest.plan_id,
+        user_id: joinRequest.user_id,
+        status: 'approved',
+      });
+
+    if (participantError) {
+      console.error('[dataUtils] Error adding participant:', participantError.message);
+      return false;
+    }
+
+    // 3. current_participants is auto-incremented by the database trigger
+    console.log(`[dataUtils] Join request ${requestId} approved successfully`);
+    return true;
   } catch (error) {
     console.error('[dataUtils] Failed to approve join:', error);
     return false;
@@ -284,17 +353,20 @@ export async function approveJoinRequest(requestId: string, userId: string): Pro
 
 // Decline a join request (for plan host only)
 export async function declineJoinRequest(requestId: string): Promise<boolean> {
-  console.log(`[dataUtils] declineJoinRequest() called - requestId: ${requestId}`);
+  console.log(`[dataUtils] declineJoinRequest() - requestId: ${requestId}`);
   try {
     const supabase = createClient();
     const { error } = await supabase
       .from('join_requests')
-      .update({ status: 'declined' })
+      .update({ status: 'rejected', responded_at: new Date().toISOString() })
       .eq('id', requestId);
 
-    const success = !error;
-    console.log(`[dataUtils] Join request declined: ${success}`);
-    return success;
+    if (error) {
+      console.error('[dataUtils] Error declining request:', error.message);
+      return false;
+    }
+    console.log('[dataUtils] Join request declined');
+    return true;
   } catch (error) {
     console.error('[dataUtils] Failed to decline join:', error);
     return false;
@@ -321,6 +393,136 @@ export async function getMessagesForPlan(planId: string): Promise<ChatMessage[]>
     return data || [];
   } catch (error) {
     console.error('[dataUtils] Failed to fetch messages:', error);
+    return [];
+  }
+}
+
+// Get plans hosted by a specific user
+export async function getHostedPlans(userId: string): Promise<Plan[]> {
+  console.log(`[dataUtils] getHostedPlans() called - userId: ${userId}`);
+  try {
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from('plans')
+      .select('*')
+      .eq('host_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('[dataUtils] Error fetching hosted plans:', error.message);
+      return [];
+    }
+
+    const plans = (data || []).map(mapPlan);
+    console.log(`[dataUtils] Fetched ${plans.length} hosted plans`);
+    return plans;
+  } catch (error) {
+    console.error('[dataUtils] Failed to fetch hosted plans:', error);
+    return [];
+  }
+}
+
+// Get plans the user has joined (approved participants)
+export async function getJoinedPlans(userId: string): Promise<Plan[]> {
+  console.log(`[dataUtils] getJoinedPlans() called - userId: ${userId}`);
+  try {
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from('plan_participants')
+      .select('plan_id, plans(*)')
+      .eq('user_id', userId)
+      .eq('status', 'approved');
+
+    if (error) {
+      console.error('[dataUtils] Error fetching joined plans:', error.message);
+      return [];
+    }
+
+    const plans = (data || []).map((item: any) => mapPlan(item.plans));
+    console.log(`[dataUtils] Fetched ${plans.length} joined plans`);
+    return plans;
+  } catch (error) {
+    console.error('[dataUtils] Failed to fetch joined plans:', error);
+    return [];
+  }
+}
+
+// Get pending join requests sent by the user
+export async function getMyJoinRequests(userId: string): Promise<{ plan: Plan; request: any }[]> {
+  console.log(`[dataUtils] getMyJoinRequests() called - userId: ${userId}`);
+  try {
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from('join_requests')
+      .select('id, status, created_at, plan_id, plans(*)')
+      .eq('user_id', userId)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('[dataUtils] Error fetching my join requests:', error.message);
+      return [];
+    }
+
+    const results = (data || []).map((item: any) => ({
+      request: { id: item.id, status: item.status, created_at: item.created_at, plan_id: item.plan_id },
+      plan: mapPlan(item.plans),
+    }));
+
+    console.log(`[dataUtils] Fetched ${results.length} pending join requests`);
+    return results;
+  } catch (error) {
+    console.error('[dataUtils] Failed to fetch my join requests:', error);
+    return [];
+  }
+}
+
+// Get incoming join requests for plans hosted by the user
+export async function getIncomingJoinRequests(userId: string): Promise<{ plan: Plan; request: any; requester: any }[]> {
+  console.log(`[dataUtils] getIncomingJoinRequests() called - userId: ${userId}`);
+  try {
+    const supabase = createClient();
+    
+    // First get all plans hosted by the user
+    const { data: hostedPlans, error: plansError } = await supabase
+      .from('plans')
+      .select('id, title, venue_name, latitude, longitude, start_time, max_participants, current_participants, host_id')
+      .eq('host_id', userId);
+
+    if (plansError || !hostedPlans || hostedPlans.length === 0) {
+      console.log('[dataUtils] No hosted plans found');
+      return [];
+    }
+
+    const planIds = hostedPlans.map((p: any) => p.id);
+    
+    // Get pending join requests for those plans
+    const { data: requests, error: reqError } = await supabase
+      .from('join_requests')
+      .select('id, status, created_at, plan_id, user_id, user_profiles!join_requests_user_id_fkey(id, email, full_name, avatar_url)')
+      .in('plan_id', planIds)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+
+    if (reqError) {
+      console.error('[dataUtils] Error fetching incoming requests:', reqError.message);
+      return [];
+    }
+
+    const results = (requests || []).map((req: any) => {
+      const planData = hostedPlans.find((p: any) => p.id === req.plan_id)!;
+      const requester = req.user_profiles;
+      return {
+        request: { id: req.id, status: req.status, created_at: req.created_at, plan_id: req.plan_id, user_id: req.user_id },
+        requester: { id: requester?.id, name: requester?.full_name || requester?.email?.split('@')[0] || 'User', avatar_url: requester?.avatar_url },
+        plan: mapPlan(planData),
+      };
+    });
+
+    console.log(`[dataUtils] Fetched ${results.length} incoming join requests`);
+    return results;
+  } catch (error) {
+    console.error('[dataUtils] Failed to fetch incoming join requests:', error);
     return [];
   }
 }

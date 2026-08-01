@@ -35,10 +35,8 @@ export default function DiscoverScreen() {
         const supabase = createClient();
 
         // Check if user is logged in
-        const { data: { user }, error: authError } = await supabase.auth.getUser();
-        if (authError) {
-          console.error('[DiscoverScreen] Auth error:', authError.message);
-        }
+        // Note: "Auth session missing!" is expected when not logged in — not a real error
+        const { data: { user } } = await supabase.auth.getUser();
         console.log('[DiscoverScreen] User logged in:', !!user);
         setIsLoggedIn(!!user);
 

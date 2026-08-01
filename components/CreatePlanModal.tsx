@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { X, MapPin, Calendar, Users, Hash } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { ACTIVITIES, type ActivityType, createPlan } from '@/lib/dataUtils';
+import { ACTIVITIES, type ActivityType, createPlan, type Plan } from '@/lib/dataUtils';
 import LocationPicker, { type SelectedLocation } from './LocationPicker';
 import ActivitySelector from './ActivitySelector';
 import DateTimePicker from './DateTimePicker';
@@ -14,12 +14,16 @@ interface CreatePlanModalProps {
   isOpen: boolean;
   onClose: () => void;
   onCreate?: (plan: any) => void;
+  planToEdit?: Plan | null;
+  onUpdate?: (updates: Partial<Omit<Plan, 'id'>>) => Promise<void>;
 }
 
 export default function CreatePlanModal({
   isOpen,
   onClose,
   onCreate,
+  planToEdit,
+  onUpdate,
 }: CreatePlanModalProps) {
   const [venue, setVenue] = useState('');
   const [selectedLocation, setSelectedLocation] = useState<SelectedLocation | null>(null);
@@ -29,6 +33,28 @@ export default function CreatePlanModal({
   const [spots, setSpots] = useState(4);
   const [description, setDescription] = useState('');
 
+  // Initialize form with plan data when editing
+  useEffect(() => {
+    if (planToEdit) {
+      console.log('[CreatePlanModal] Initializing edit mode for plan:', planToEdit.id);
+      setVenue(planToEdit.location);
+      setSelectedLocation({ name: planToEdit.location, lat: planToEdit.lat, lng: planToEdit.lng });
+      setActivity(planToEdit.activity);
+      setDate(planToEdit.date);
+      setTime(planToEdit.time);
+      setSpots(planToEdit.spots_available);
+      setDescription(planToEdit.description);
+    } else {
+      setVenue('');
+      setSelectedLocation(null);
+      setActivity('coffee');
+      setDate('');
+      setTime('14:00');
+      setSpots(4);
+      setDescription('');
+    }
+  }, [planToEdit, isOpen]);
+
   // Determine if required fields are filled
   const isFormValid = useMemo(() => {
     return selectedLocation && selectedLocation.lat !== 0 && activity && date && time && spots >= 2 && spots <= 10;
@@ -37,14 +63,12 @@ export default function CreatePlanModal({
   const handleCreate = async () => {
     if (!isFormValid) return;
 
-    console.log('[CreatePlanModal] Creating plan...', { activity, venue: selectedLocation?.name, date, time, spots });
-
     if (!selectedLocation || selectedLocation.lat === 0) {
       console.error('[CreatePlanModal] No location selected');
       return;
     }
 
-    const newPlan = {
+    const planData = {
       title: `${ACTIVITIES[activity].label} at ${selectedLocation.name}`,
       description: description || `Join us for a ${activity} experience!`,
       location: selectedLocation.name,
@@ -57,25 +81,23 @@ export default function CreatePlanModal({
       attendees_count: 1,
     };
 
-    console.log('[CreatePlanModal] Calling createPlan in Supabase...');
-    const result = await createPlan(newPlan);
-    
-    if (result) {
-      console.log('[CreatePlanModal] Plan created successfully:', result.id);
-      onCreate?.(result);
+    if (planToEdit && onUpdate) {
+      // Edit mode
+      console.log('[CreatePlanModal] Updating plan:', planToEdit.id);
+      await onUpdate(planData);
     } else {
-      console.error('[CreatePlanModal] Failed to create plan');
+      // Create mode
+      console.log('[CreatePlanModal] Creating plan...');
+      const result = await createPlan(planData);
+      if (result) {
+        console.log('[CreatePlanModal] Plan created successfully:', result.id);
+        onCreate?.(result);
+      } else {
+        console.error('[CreatePlanModal] Failed to create plan');
+      }
     }
     
     onClose();
-    // Reset form
-    setVenue('');
-    setSelectedLocation(null);
-    setActivity('coffee');
-    setDate('');
-    setTime('14:00');
-    setSpots(4);
-    setDescription('');
   };
 
   if (!isOpen) return null;
@@ -182,14 +204,14 @@ export default function CreatePlanModal({
                 />
               </div>
 
-              {/* Create Button */}
+              {/* Create/Update Button */}
               <Button
                 onClick={handleCreate}
                 disabled={!isFormValid}
                 size="lg"
                 className="w-full rounded-xl"
               >
-                Create Plan
+                {planToEdit ? 'Save Changes' : 'Create Plan'}
               </Button>
             </div>
 
